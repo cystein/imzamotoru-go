@@ -1,0 +1,60 @@
+name: KolitakipIMZA Installer Üret
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # 1. Adım: Windows exe'yi burada, Ubuntu üzerinde mingw-w64 ile cross-compile ediyoruz —
+  #    aynı kanıtlanmış tarif (build_windows.sh), Windows makinesine hiç gerek yok.
+  build-exe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: mingw-w64 kur
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: İkon kaynağını (rsrc) üret
+        run: |
+          go install github.com/akavel/rsrc@latest
+          "$(go env GOPATH)/bin/rsrc" -ico assets/icon.ico -o rsrc_windows_amd64.syso
+
+      - name: Windows exe derle
+        run: |
+          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+            go build -ldflags "-H=windowsgui" -o KolitakipIMZA.exe .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KolitakipIMZA-exe
+          path: KolitakipIMZA.exe
+
+  # 2. Adım: SADECE burası gerçek Windows istiyor — Inno Setup Compiler (ISCC.exe) Windows'a
+  #    özgü bir araç, Linux portu yok.
+  build-installer:
+    needs: build-exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: KolitakipIMZA-exe
+          path: .
+
+      - name: Inno Setup kur
+        run: choco install innosetup -y
+
+      - name: Installer derle
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\KolitakipIMZA.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KolitakipIMZA-Setup
+          path: installer/output/KolitakipIMZA-Setup.exe
