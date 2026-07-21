@@ -1,0 +1,14 @@
+# Derleme çıktıları — kaynaktan yeniden üretilir, repoya girmez
+KolitakipIMZA.exe
+imzaci
+imzaci.yeni
+*.exe.gz
+*.syso
+installer/output/
+
+# Eski, artık kullanılmayan arşivler (eski oturum kayıtları/kullanıcı adı gibi hassas bilgi içeriyor)
+bedoimzamotoru2.0.zip
+KolitakipIMZA.zip
+
+# Yedek dosya
+main.go.orig.bak
