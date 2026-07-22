@@ -94,7 +94,14 @@ func startServer(ln net.Listener) {
 	log.Printf("🚀 Bedo'nun PAdES Entegreli Akıllı İmza Motoru Hazır! Port: %s\n", PORT)
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, _ := upgrader.Upgrade(w, r, nil)
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			// CheckOrigin izin vermediğinde (veya bağlantı bir sebeple yükseltilemediğinde)
+			// Upgrade() zaten uygun bir HTTP hata yanıtı yazıp nil bir *Conn döndürüyor —
+			// eskiden bu hata görmezden gelinip nil conn üzerinde Close/ReadJSON çağrılıyordu,
+			// bu da her izinsiz kaynaktan gelen istekte panic'e (nil pointer dereference) yol açıyordu.
+			return
+		}
 		defer conn.Close()
 		for {
 			var msg RequestMessage
