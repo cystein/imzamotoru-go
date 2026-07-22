@@ -38,6 +38,9 @@ jobs:
   build-installer:
     needs: build-exe
     runs-on: windows-latest
+    # GITHUB_TOKEN ile Release oluşturabilmek için (repo varsayılanı salt-okunur olabiliyor).
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -58,3 +61,33 @@ jobs:
         with:
           name: KolitakipIMZA-Setup
           path: installer/output/KolitakipIMZA-Setup.exe
+
+      # 3. Adım: Installer'ı sunucumuz yerine GitHub Releases üzerinden dağıtıyoruz —
+      # GitHub'ın kendi CDN'i bizim sunucumuzdan çok daha hızlı ve upload bant genişliğimizi
+      # (indirmeler bizim üzerimizden değil GitHub'ın üzerinden gittiği için) hiç yormuyor.
+      # Sürüm etiketi version.go'daki APP_VERSION'dan okunuyor; aynı sürüm için workflow
+      # tekrar çalıştırılırsa (release zaten varsa) release oluşturmak yerine dosyayı üzerine
+      # yazıyoruz (idempotent). Varlık adı hep "KolitakipIMZA-Setup.exe" kalıyor ki
+      # ".../releases/latest/download/KolitakipIMZA-Setup.exe" linki hangi sürüm olursa olsun
+      # her zaman çalışsın — istemci tarafında versiyon numarasını güncellemeye gerek kalmıyor.
+      - name: Sürümü oku
+        id: surum
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/.*APP_VERSION = "\(.*\)".*/\1/p' version.go)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: GitHub Release'e installer'ı yükle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.surum.outputs.version }}"
+          REPO="${{ github.repository }}"
+          ASSET="installer/output/KolitakipIMZA-Setup.exe"
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" "$ASSET" --repo "$REPO" \
+              --title "KolitakipIMZA $TAG" --notes "Otomatik CI derlemesi."
+          fi
