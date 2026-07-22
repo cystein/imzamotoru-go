@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"image/png"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -91,7 +93,7 @@ func main() {
 // kaldırır. platformStartup() tarafından çağrılır — Linux'ta doğrudan, Windows'ta sistem
 // tepsisi hazır olduktan sonra arka planda.
 func startServer(ln net.Listener) {
-	log.Printf("🚀 Bedo'nun PAdES Entegreli Akıllı İmza Motoru Hazır! Port: %s\n", PORT)
+	log.Printf("[BAŞLATMA] %s hazır, port: %s\n", APP_NAME, PORT)
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -345,7 +347,7 @@ func signHash(p *pkcs11.Ctx, pin, hashBase64, certID string) (string, error) {
 		return "", fmt.Errorf("İMZA ATILAMADI (Donanım İşlemi Reddeti): %v", err)
 	}
 
-	log.Printf("🎉 [SIGN BAŞARILI] İMZA ÜRETİLDİ! (İşlem Süresi: %v)", time.Since(start))
+	log.Printf("[SIGN-3] İmza başarıyla üretildi (işlem süresi: %v)", time.Since(start))
 	return base64.StdEncoding.EncodeToString(sig), nil
 }
 
@@ -401,8 +403,36 @@ func (a *AkisSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("Donanım imza üretimi başarısız: %v", err)
 	}
+
+	if a.mech.Mechanism == pkcs11.CKM_ECDSA {
+		// PKCS#11'in CKM_ECDSA mekanizması ham (r || s) bayt dizisini eğrinin boyutuna göre sabit
+		// genişlikte döndürüyor (ör. P-384 için 48+48=96 bayt) — ama CMS/X.509'un beklediği
+		// ECDSA-Sig-Value (RFC 3279) DER SEQUENCE{ INTEGER r, INTEGER s } formatıdır. Bu adım
+		// atlanınca imza yine kriptografik olarak GEÇERLİ kalıyor (kartın özel anahtarıyla
+		// üretildiği matematiksel olarak doğrulanabiliyor, sadece gerçek gerçek doğrulama
+		// yaparken elle DER'e çevirmek gerekiyor) ama standart doğrulayıcılar imzayı
+		// ayrıştıramadığı için reddediyor — RSA'daki DigestInfo eksikliğiyle aynı aile bir sorun.
+		sig, err = ecdsaHamImzayiDerYap(sig)
+		if err != nil {
+			return nil, fmt.Errorf("ECDSA imzası DER formatına çevrilemedi: %v", err)
+		}
+	}
+
 	log.Println("[AKIS-SIGNER] ✅ Çip kriptografik mühtü başarıyla üretti!")
 	return sig, nil
+}
+
+// ecdsaHamImzayiDerYap, PKCS#11'in CKM_ECDSA'dan döndürdüğü ham (r || s) baytlarını (r ve s eşit
+// uzunlukta, eğrinin bayt boyutuna göre sabit genişlikte) standart ECDSA-Sig-Value DER kodlamasına
+// çevirir: SEQUENCE { INTEGER r, INTEGER s }.
+func ecdsaHamImzayiDerYap(ham []byte) ([]byte, error) {
+	if len(ham) == 0 || len(ham)%2 != 0 {
+		return nil, fmt.Errorf("beklenmeyen ECDSA ham imza uzunluğu: %d bayt (çift sayı olmalı)", len(ham))
+	}
+	yari := len(ham) / 2
+	r := new(big.Int).SetBytes(ham[:yari])
+	s := new(big.Int).SetBytes(ham[yari:])
+	return asn1.Marshal(struct{ R, S *big.Int }{r, s})
 }
 
 // ============================================================================
@@ -1538,6 +1568,6 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 		return sunucuHataMesaji(postResp, "Sunucu imzalı dosyayı reddetti")
 	}
 
-	log.Println("🎉 [PAdES TAMAMLANDI] Evrak başarıyla mühürlendi ve arşive kaldırıldı!")
+	log.Println("[PAdES-5] Evrak başarıyla mühürlendi ve arşive kaldırıldı.")
 	return nil
 }
