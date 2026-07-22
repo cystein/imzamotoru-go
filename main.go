@@ -357,13 +357,40 @@ func (a *AkisSigner) Public() crypto.PublicKey {
 	return a.pubKey
 }
 
+// RFC 8017 (PKCS#1 v1.5) DigestInfo ASN.1 önekleri. RSA imzalamada bu önek, hash baytlarının
+// önüne eklenip PKCS#1 dolgusu ondan sonra uygulanır — imzanın "hangi algoritmayla üretilmiş bir
+// özeti imzaladığını" kriptografik olarak imzanın içine bağlar. PKCS#11'in CKM_RSA_PKCS
+// mekanizması bunu KENDİSİ eklemiyor; yalnızca kendisine verilen baytlara PKCS#1 v1.5 dolgusu
+// uygulayıp ham RSA işlemi yapıyor — önek eklemek çağıranın (bizim) sorumluluğumuz. Bu adım
+// atlanınca üretilen imza kriptografik olarak yine GEÇERLİ ve sahtelenemez kalıyor (özel anahtarla
+// üretildiği matematiksel olarak doğrulanabiliyor), ama RFC 5652/CMS'in beklediği standart
+// DigestInfo yapısına uymuyor — Adobe Reader gibi katı doğrulayıcılar bu yüzden "imzanın
+// geçerliliği bilinmiyor" uyarısı veriyordu. CKM_ECDSA için bu önek GEREKMEZ (ECDSA imzası zaten
+// doğrudan hash üzerinden, DigestInfo sarmalamadan atılır) — bu yüzden yalnızca RSA dalında uygulanıyor.
+var digestInfoOnekleri = map[crypto.Hash][]byte{
+	crypto.SHA1:   {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14},
+	crypto.SHA256: {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20},
+	crypto.SHA384: {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30},
+	crypto.SHA512: {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
+}
+
 func (a *AkisSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	log.Println("[AKIS-SIGNER] PAdES kütüphanesi çipe imza emri verdi, donanım hesaplıyor...")
 	err := a.p.SignInit(a.session, []*pkcs11.Mechanism{a.mech}, a.privKey)
 	if err != nil {
 		return nil, fmt.Errorf("SignInit hatası: %v", err)
 	}
-	sig, err := a.p.Sign(a.session, digest)
+
+	dataToSign := digest
+	if a.mech.Mechanism == pkcs11.CKM_RSA_PKCS {
+		onek, ok := digestInfoOnekleri[opts.HashFunc()]
+		if !ok {
+			return nil, fmt.Errorf("desteklenmeyen özet algoritması, DigestInfo öneki bulunamadı: %v", opts.HashFunc())
+		}
+		dataToSign = append(append([]byte{}, onek...), digest...)
+	}
+
+	sig, err := a.p.Sign(a.session, dataToSign)
 	if err != nil {
 		return nil, fmt.Errorf("Donanım imza üretimi başarısız: %v", err)
 	}
