@@ -8,7 +8,12 @@ package main
 
 typedef int (*C_Initialize_t)(void*);
 
-static int force_init(const char* lib_path) {
+// son_win_hata: LoadLibraryEx/GetProcAddress başarısız olduğunda GetLastError()'ı çağırana taşır.
+// Özellikle ERROR_BAD_EXE_FORMAT (193) — 32-bit bir DLL'in 64-bit sürece (ya da tam tersi)
+// yüklenmeye çalışılması — "dosya yok/bozuk" ile "mimari uyuşmazlığı"nı ayırt etmemizi sağlar;
+// gerçek bir üretim vakasında (2026-07, AKİS'in sadece 32-bit sürümü kuruluydu) bu ayrımı sadece
+// manuel analizle (force_init kod -1'in ne anlama geldiğini tahmin ederek) çıkarabilmiştik.
+static int force_init(const char* lib_path, DWORD* son_win_hata) {
     // LoadLibraryA yerine bilerek LoadLibraryExA + arama bayrakları: yüklenen DLL'in
     // bağımlılıkları ararken uygulamanın kendi klasörü/CWD DEĞİL, sadece System32/SysWOW64 ve
     // DLL'in kendi bulunduğu klasör taranır. Aksi halde uygulamanın kurulu olduğu klasöre (artık
@@ -16,9 +21,16 @@ static int force_init(const char* lib_path) {
     // bırakan başka bir yerel süreç, sürücü yüklenirken sessizce çalıştırılabilirdi.
     HMODULE handle = LoadLibraryExA(lib_path, NULL,
         LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
-    if (!handle) return -1;
+    if (!handle) {
+        *son_win_hata = GetLastError();
+        return -1;
+    }
     C_Initialize_t c_init = (C_Initialize_t)GetProcAddress(handle, "C_Initialize");
-    if (!c_init) return -2;
+    if (!c_init) {
+        *son_win_hata = GetLastError();
+        return -2;
+    }
+    *son_win_hata = 0;
     return c_init(NULL);
 }
 */
@@ -29,6 +41,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unsafe"
 
@@ -118,10 +131,26 @@ func surucuyuBaslat(dllYolu string) (*pkcs11.Ctx, error) {
 	cPath := C.CString(dllYolu)
 	defer C.free(unsafe.Pointer(cPath))
 
-	if res := C.force_init(cPath); res != 0 {
-		return nil, fmt.Errorf("force_init kod %d (%s)", res, dllYolu)
+	var sonWinHata C.DWORD
+	if res := C.force_init(cPath, &sonWinHata); res != 0 {
+		return nil, fmt.Errorf("force_init kod %d%s (%s)", int(res), winHataAciklamasi(int(res), uint32(sonWinHata)), dllYolu)
 	}
 	return pkcs11.New(dllYolu), nil
+}
+
+// winHataAciklamasi, force_init'in LoadLibraryEx aşamasında (res == -1) aldığı GetLastError()
+// değerini insan tarafından okunabilir bir teşhise çevirir. En yaygın/önemli örnek
+// ERROR_BAD_EXE_FORMAT (193): DLL'in mimarisi (32/64-bit) bu sürecin mimarisiyle uyuşmuyor —
+// bunu bilince bildir() raporundan doğrudan kesin teşhis çıkar, "acaba mimari mi?" diye manuel
+// tahmin yürütmeye gerek kalmaz.
+func winHataAciklamasi(res int, winHata uint32) string {
+	if res != -1 || winHata == 0 {
+		return ""
+	}
+	if winHata == 193 { // ERROR_BAD_EXE_FORMAT
+		return fmt.Sprintf(" [Windows hata %d ERROR_BAD_EXE_FORMAT — ⚠️ Mimari uyuşmazlığı: DLL bu sürecin mimarisiyle (%s) uyumsuz, muhtemelen yanlış bitlikte (32/64-bit) bir sürücü kurulu]", winHata, runtime.GOARCH)
+	}
+	return fmt.Sprintf(" [Windows hata %d]", winHata)
 }
 
 // initDriver, önce (varsa) config dosyasındaki özel sürücü yolunu, sonra bilinen adaylardan
