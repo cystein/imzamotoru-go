@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/getlantern/systray"
@@ -22,7 +24,29 @@ func platformStartup() {
 	systray.Run(onTrayReady, onTrayExit)
 }
 
+// logDosyasiniAyarla, log çıktısını (varsayılan olarak -H=windowsgui derlemesinde HİÇBİR YERE
+// gitmeyen, konsolsuz bir process olduğu için kaybolan) stderr yerine kalıcı bir dosyaya
+// yönlendirir. Program pencere/konsol açmadığı için bu dosya, saha desteğinde "eczacının
+// bilgisayarında ne oldu" sorusuna cevap bulabileceğimiz TEK yer.
+func logDosyasiniAyarla() {
+	programData := os.Getenv("ProgramData")
+	if programData == "" {
+		programData = `C:\ProgramData`
+	}
+	klasor := filepath.Join(programData, "KolitakipIMZA")
+	if err := os.MkdirAll(klasor, 0755); err != nil {
+		return // log dosyasına yazamıyoruz ama bu, uygulamanın çalışmasını engellememeli
+	}
+	dosya, err := os.OpenFile(filepath.Join(klasor, "app.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	log.SetOutput(dosya)
+	log.SetFlags(log.LstdFlags)
+}
+
 func onTrayReady() {
+	logDosyasiniAyarla()
 	systray.SetIcon(trayIcon)
 	systray.SetTitle(APP_NAME)
 
@@ -46,7 +70,10 @@ func onTrayReady() {
 
 	systray.SetTooltip(fmt.Sprintf("%s çalışıyor (v%s)", APP_NAME, APP_VERSION))
 
-	mDurum := systray.AddMenuItem(fmt.Sprintf("Durum: Çalışıyor (v%s)", APP_VERSION), "")
+	// mDurum paket seviyesinde tanımlı (notify_windows.go) — burada sadece atanıyor, böylece
+	// bildir() farklı bir goroutine'den (cardWorker, update kontrolü) tepsi başlığını/tooltip'i
+	// sonradan güncelleyebiliyor.
+	mDurum = systray.AddMenuItem(fmt.Sprintf("Durum: Çalışıyor (v%s)", APP_VERSION), "")
 	mDurum.Disable()
 	systray.AddSeparator()
 	mCikis := systray.AddMenuItem("Çıkış", "Uygulamadan çık")

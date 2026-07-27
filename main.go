@@ -147,49 +147,84 @@ func cardWorker() {
 	runtime.LockOSThread()
 	log.Println("🛡️ [WORKER] Donanım İş Parçacığı (OS Thread) kilitlendi.")
 
-	p, err := initDriver()
-	if err != nil {
-		log.Fatalf("SÜRÜCÜ BAŞLATILAMADI: %v", err)
-	}
-	log.Println("✅ [WORKER] Sürücü Thread'e başarıyla bağlandı, emirler bekleniyor...")
+	// ÖNEMLİ: initDriver() başarısız olursa process ARTIK ÖLMÜYOR. Eskiden log.Fatalf() ile
+	// tüm süreç os.Exit(1) oluyordu — bu, sürücüsü eksik/bozuk bir makinede kendi kendini
+	// kilitleyen bir sistem yaratıyordu: program çalışmadığı için self-update (checkForUpdates,
+	// bkz. update_windows.go) da hiç devreye giremiyor, düzeltme kullanıcıya asla ulaşamıyordu.
+	// Artık: hata bildirilir (log + systray + uzak sunucu), süreç ayakta kalır, 5 dakikada bir
+	// yeniden dener (kullanıcı sürücüyü sonradan kurabilir ya da exe güncellenebilir).
+	p := surucuyuDeneYeninenBildir()
 
-	for job := range jobQueue {
-		switch job.Action {
-		case "list_certs":
-			data, err := listCertificates(p)
-			if err != nil {
-				job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
-			} else {
-				job.Reply <- ResponseMessage{Status: "success", Data: data}
-			}
-		case "sign_hash":
-			if job.CertID == "" {
-				job.Reply <- ResponseMessage{Status: "error", Error: "Sertifika ID boş olamaz!"}
+	yenidenDenemeAraligi := time.NewTicker(5 * time.Minute)
+	defer yenidenDenemeAraligi.Stop()
+
+	for {
+		select {
+		case job := <-jobQueue:
+			if p == nil {
+				job.Reply <- ResponseMessage{Status: "error", Error: "Akıllı kart sürücüsü bulunamadı/başlatılamadı. Kart okuyucu sürücünüzün kurulu olduğundan emin olun; uygulama arka planda periyodik olarak yeniden deniyor."}
 				continue
 			}
-			sig, err := signHash(p, job.Pin, job.Hash, job.CertID)
-			if err != nil {
-				job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
-			} else {
-				job.Reply <- ResponseMessage{Status: "success", Data: sig}
+			switch job.Action {
+			case "list_certs":
+				data, err := listCertificates(p)
+				if err != nil {
+					job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
+				} else {
+					job.Reply <- ResponseMessage{Status: "success", Data: data}
+				}
+			case "sign_hash":
+				if job.CertID == "" {
+					job.Reply <- ResponseMessage{Status: "error", Error: "Sertifika ID boş olamaz!"}
+					continue
+				}
+				sig, err := signHash(p, job.Pin, job.Hash, job.CertID)
+				if err != nil {
+					job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
+				} else {
+					job.Reply <- ResponseMessage{Status: "success", Data: sig}
+				}
+			case "sign_pades":
+				if job.CertID == "" || job.DokumNo == "" {
+					job.Reply <- ResponseMessage{Status: "error", Error: "Sertifika ID veya Döküm No boş olamaz!"}
+					continue
+				}
+				if job.Token == "" {
+					job.Reply <- ResponseMessage{Status: "error", Error: "Yükleme jetonu (upload_token) eksik! Lütfen sayfayı yenileyip tekrar deneyin."}
+					continue
+				}
+				err := signPAdESAndSync(p, job.Pin, job.CertID, job.DokumNo, job.Token)
+				if err != nil {
+					job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
+				} else {
+					job.Reply <- ResponseMessage{Status: "success", Data: "PAdES İmza PDF'e gömüldü ve sunucuya iletildi!"}
+				}
 			}
-		case "sign_pades":
-			if job.CertID == "" || job.DokumNo == "" {
-				job.Reply <- ResponseMessage{Status: "error", Error: "Sertifika ID veya Döküm No boş olamaz!"}
-				continue
-			}
-			if job.Token == "" {
-				job.Reply <- ResponseMessage{Status: "error", Error: "Yükleme jetonu (upload_token) eksik! Lütfen sayfayı yenileyip tekrar deneyin."}
-				continue
-			}
-			err := signPAdESAndSync(p, job.Pin, job.CertID, job.DokumNo, job.Token)
-			if err != nil {
-				job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
-			} else {
-				job.Reply <- ResponseMessage{Status: "success", Data: "PAdES İmza PDF'e gömüldü ve sunucuya iletildi!"}
+		case <-yenidenDenemeAraligi.C:
+			if p == nil {
+				p = surucuyuDeneYeninenBildir()
 			}
 		}
 	}
+}
+
+// surucuyuDeneYeninenBildir, initDriver()'ı bir kez dener; başarısızsa merkezi bildir()
+// üzerinden (Kritik/SURUCU_YOK) haber verir ve nil döner — çağıran taraf (cardWorker) bunu
+// öldürücü bir hata olarak değil, "şimdilik yok, sonra tekrar denenecek" olarak ele alır.
+func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
+	p, err := initDriver()
+	if err != nil {
+		log.Printf("⚠️ [WORKER] SÜRÜCÜ BAŞLATILAMADI: %v", err)
+		// PKCS#11 DLL'i bulunamasa/başlatılamasa bile PC/SC (winscard.dll) seviyesinde okuyucu
+		// ve kart görünüyor mu diye ayrıca bakıyoruz — rapora eklenen bu teşhis, "okuyucu hiç
+		// yok" ile "kart var ama bizim aday listemizde olmayan bir sürücü lazım" ayrımını
+		// bizim tarafımızdan (uzaktan, eczaneye gitmeden) yapabilmemizi sağlıyor.
+		bildir(SeviyeKritik, "SURUCU_YOK", fmt.Sprintf("Akıllı kart sürücüsü bulunamadı/başlatılamadı: %v | PC/SC teşhisi: %s", err, pcscTeshisi()))
+		return nil
+	}
+	log.Println("✅ [WORKER] Sürücü Thread'e başarıyla bağlandı, emirler bekleniyor...")
+	bildir(SeviyeBilgi, "SURUCU_OK", "Akıllı kart sürücüsü başarıyla başlatıldı.")
+	return p
 }
 
 // NOT: PKCS11 standardı karttan sadece nitel bayraklar verir (Normal / Az Kaldı / Son Deneme /
@@ -203,9 +238,11 @@ func getPinStatus(p *pkcs11.Ctx, slot uint) (string, bool) {
 		return "Bilinmiyor", false
 	}
 	if info.Flags&pkcs11.CKF_USER_PIN_LOCKED != 0 {
+		bildir(SeviyeKritik, "PIN_KILITLI", fmt.Sprintf("Kart PIN'i kilitlendi (PUK gerekli) — kart: %s", info.Label))
 		return "⛔ KİLİTLİ! (PUK Kodu Gerekli)", true
 	}
 	if info.Flags&pkcs11.CKF_USER_PIN_FINAL_TRY != 0 {
+		bildir(SeviyeUyari, "PIN_SON_DENEME", fmt.Sprintf("Kart PIN'i son deneme hakkında — kart: %s", info.Label))
 		return "🔴 SON DENEME HAKKI! Bir yanlış giriş daha kartı tamamen kilitler.", false
 	}
 	if info.Flags&pkcs11.CKF_USER_PIN_COUNT_LOW != 0 {
@@ -1418,7 +1455,7 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 		return fmt.Errorf("Kart okuyucuda takılı değil veya temas etmiyor!")
 	}
 	slot := slots[0]
-	
+
 	session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
 	if err != nil {
 		return fmt.Errorf("Kart oturumu açılamadı: %v", err)
@@ -1484,59 +1521,58 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 		pubKey:  cert.PublicKey,
 		mech:    mech,
 	}
-	
+
 	// 4. PAdES İmza Yapılandırması ve PDF Okuyucu
 	log.Println("[PAdES-3] PDF mühürleme ve kriptografik damga hazırlanıyor...")
 	inputReader := bytes.NewReader(pdfData)
 	size := int64(len(pdfData))
-	
+
 	pdfReader, err := pdf.NewReader(inputReader, size)
 	if err != nil {
 		return fmt.Errorf("PDF yapısı bozuk veya okuyucu başlatılamadı: %v", err)
 	}
 
 	var outputBuffer bytes.Buffer
-	
+
 	// TAM DOĞRU YAPILANDIRMA (Görünür İmzalı)
-    // İmza kimlik mührü (dairesel "E-İMZA" rozeti + kart sertifikasından okunan ad-soyad ve
-    // maskelenmiş TCKN), Node'un ürettiği PDF'deki "İMZALAYAN ECZANE" kutusunun tamamına
-    // (x: 325.28-545.28, y: 50-145) denk gelecek şekilde konumlandırıldı. Görsel oluşturulamazsa
-    // (beklenmez ama zırhlı kalalım) imza görünmez uygulanmaya devam eder.
-    appearance := sign.Appearance{Visible: false}
-    adSoyad := cert.Subject.CommonName
-    tcknMaskeli := tcknMaskele(cert.Subject.SerialNumber)
-    if kimlikPNG, kimlikErr := imzaKimlikGorseliOlustur(adSoyad, tcknMaskeli); kimlikErr == nil {
-        appearance = sign.Appearance{
-            Visible:     true,
-            Page:        1,
-            LowerLeftX:  325.28,
-            LowerLeftY:  50,
-            UpperRightX: 545.28,
-            UpperRightY: 145,
-            Image:       kimlikPNG,
-        }
-    } else {
-        log.Printf("⚠️ İmza kimlik görseli oluşturulamadı, imza görünmez uygulanacak: %v", kimlikErr)
-    }
+	// İmza kimlik mührü (dairesel "E-İMZA" rozeti + kart sertifikasından okunan ad-soyad ve
+	// maskelenmiş TCKN), Node'un ürettiği PDF'deki "İMZALAYAN ECZANE" kutusunun tamamına
+	// (x: 325.28-545.28, y: 50-145) denk gelecek şekilde konumlandırıldı. Görsel oluşturulamazsa
+	// (beklenmez ama zırhlı kalalım) imza görünmez uygulanmaya devam eder.
+	appearance := sign.Appearance{Visible: false}
+	adSoyad := cert.Subject.CommonName
+	tcknMaskeli := tcknMaskele(cert.Subject.SerialNumber)
+	if kimlikPNG, kimlikErr := imzaKimlikGorseliOlustur(adSoyad, tcknMaskeli); kimlikErr == nil {
+		appearance = sign.Appearance{
+			Visible:     true,
+			Page:        1,
+			LowerLeftX:  325.28,
+			LowerLeftY:  50,
+			UpperRightX: 545.28,
+			UpperRightY: 145,
+			Image:       kimlikPNG,
+		}
+	} else {
+		log.Printf("⚠️ İmza kimlik görseli oluşturulamadı, imza görünmez uygulanacak: %v", kimlikErr)
+	}
 
-    signerData := sign.SignData{
-        Certificate: cert,
+	signerData := sign.SignData{
+		Certificate: cert,
 
-        Signature: sign.SignDataSignature{
-            CertType: sign.ApprovalSignature,
-            Info: sign.SignDataSignatureInfo{
-                Name:        cert.Subject.CommonName,
-                Location:    "İstanbul Sosyal Güvenlik İl Müdürlüğü - Süreyyapaşa SSGM",
-                Reason:      "5070 Sayılı Kanun Gereğince Resmi Örneklemeye İtiraz Dilekçesi e-İmza Onayı",
-                ContactInfo: "sureyyapasakomisyon@sgk.gov.tr",
-                Date:        time.Now(),
-            },
-        },
-        Signer:         akisSigner,
-        RevocationData: revocation.InfoArchival{},
-        Appearance:     appearance,
-    }
-
+		Signature: sign.SignDataSignature{
+			CertType: sign.ApprovalSignature,
+			Info: sign.SignDataSignatureInfo{
+				Name:        cert.Subject.CommonName,
+				Location:    "İstanbul Sosyal Güvenlik İl Müdürlüğü - Süreyyapaşa SSGM",
+				Reason:      "5070 Sayılı Kanun Gereğince Resmi Örneklemeye İtiraz Dilekçesi e-İmza Onayı",
+				ContactInfo: "sureyyapasakomisyon@sgk.gov.tr",
+				Date:        time.Now(),
+			},
+		},
+		Signer:         akisSigner,
+		RevocationData: revocation.InfoArchival{},
+		Appearance:     appearance,
+	}
 
 	// 5. İmzayı PDF'e Göm
 	if err := sign.Sign(inputReader, &outputBuffer, pdfReader, size, signerData); err != nil {

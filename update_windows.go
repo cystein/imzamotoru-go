@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -75,6 +76,7 @@ func guncellemeyiDenetle() {
 	// uygulanıyordu, bu bir gerileme olurdu, artık sert biçimde reddediyoruz.
 	if info.SHA256 == "" || info.Signature == "" {
 		log.Printf("[UPDATE] ⛔ latest.json'da sha256 veya imza eksik, güncelleme reddedildi (sahte/bozuk sunucu yanıtı olabilir)")
+		bildir(SeviyeKritik, "SAHTE_GUNCELLEME", fmt.Sprintf("latest.json'da sha256/imza eksik (hedef sürüm: %s), güncelleme reddedildi", info.Version))
 		return
 	}
 
@@ -109,11 +111,13 @@ func guncellemeyiDenetle() {
 	shaBytes, err := hex.DecodeString(info.SHA256)
 	if err != nil {
 		log.Printf("[UPDATE] ⛔ sha256 formatı geçersiz, güncelleme reddedildi: %v", err)
+		bildir(SeviyeKritik, "SAHTE_GUNCELLEME", fmt.Sprintf("sha256 formatı geçersiz (hedef sürüm: %s), güncelleme reddedildi: %v", info.Version, err))
 		return
 	}
 	sigBytes, err := base64.StdEncoding.DecodeString(info.Signature)
 	if err != nil {
 		log.Printf("[UPDATE] ⛔ imza formatı geçersiz, güncelleme reddedildi: %v", err)
+		bildir(SeviyeKritik, "SAHTE_GUNCELLEME", fmt.Sprintf("imza formatı geçersiz (hedef sürüm: %s), güncelleme reddedildi: %v", info.Version, err))
 		return
 	}
 
@@ -128,6 +132,7 @@ func guncellemeyiDenetle() {
 
 	if err := update.Apply(bytes.NewReader(data), opts); err != nil {
 		log.Printf("[UPDATE] ⛔ Güncelleme reddedildi (sha256 veya imza uyuşmadı, ya da dosya sistemi hatası): %v", err)
+		bildir(SeviyeKritik, "SAHTE_GUNCELLEME", fmt.Sprintf("sha256/imza doğrulaması başarısız (hedef sürüm: %s), güncelleme reddedildi: %v — bu bir güvenlik olayı olabilir", info.Version, err))
 		return
 	}
 
