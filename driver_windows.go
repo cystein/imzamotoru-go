@@ -40,6 +40,9 @@ import (
 var driverAdaylari = []string{
 	"akisp11.dll",  // TÜBİTAK Kamu SM AKİS
 	"aetpkss1.dll", // A.E.T. Europe SafeSign/AETSign ailesi (TÜRKTRUST'ın bazı kart nesilleri) — ikincil kaynaklardan doğrulandı, garanti değil
+	"gclib.dll",    // GemSafe (Gemalto/Thales) kart orta katmanı
+	"siecap11.dll", // Siemens CardOS PKCS#11 orta katmanı
+	"eTPKCS11.dll", // SafeNet/Aladdin eToken PKCS#11 orta katmanı
 }
 
 // driverAdayKlasorleri, DLL'lerin aranacağı sistem klasörlerini döndürür.
