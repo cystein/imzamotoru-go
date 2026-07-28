@@ -168,7 +168,10 @@ func initDriver() (*pkcs11.Ctx, error) {
 
 	adaylar := bulunanSurucuAdaylari()
 	if len(adaylar) == 0 {
-		return nil, fmt.Errorf("bilinen akıllı kart sürücüsü (%v) System32/SysWOW64 içinde bulunamadı — sürücü kurulu mu?", driverAdaylari)
+		// %w ile ErrSurucuHicKurulmamis'e sarmalanıyor (main.go) — surucuHatasiKullaniciMesaji()
+		// bu sentinel'i errors.Is() ile yakalayıp eczacıya "sürücü kurulu değil, kurun" diyor;
+		// aşağıdaki "bulundu ama başlatılamadı" durumundan (mimari uyuşmazlığı vb.) ayırt ediliyor.
+		return nil, fmt.Errorf("%w — aranan dosyalar: %v (System32/SysWOW64 içinde bulunamadı)", ErrSurucuHicKurulmamis, driverAdaylari)
 	}
 
 	var sonHata error

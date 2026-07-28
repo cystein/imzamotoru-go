@@ -36,6 +36,7 @@ import "C"
 import (
 	"fmt"
 	"log"
+	"os"
 	"unsafe"
 
 	"github.com/miekg/pkcs11"
@@ -48,6 +49,13 @@ const AKIS_LIB_PATH = "/usr/lib/libakisp11.so"
 // her zaman dolu bir CK_C_INITIALIZE_ARGS struct'ı gönderdiği için) ham bir dlopen/dlsym
 // çağrısıyla karşılar, sonra resmi pkcs11 wrapper'ını aynı yüklü kütüphaneye bağlar.
 func initDriver() (*pkcs11.Ctx, error) {
+	// Windows tarafındaki bulunanSurucuAdaylari()'nin dosya-varlığı kontrolüyle aynı ayrımı
+	// burada da yapıyoruz: dosya hiç yoksa ErrSurucuHicKurulmamis (main.go), varsa ama
+	// başlatılamıyorsa genel bir hata — surucuHatasiKullaniciMesaji() ikisini ayırt ediyor.
+	if _, statErr := os.Stat(AKIS_LIB_PATH); statErr != nil {
+		return nil, fmt.Errorf("%w (aranan: %s)", ErrSurucuHicKurulmamis, AKIS_LIB_PATH)
+	}
+
 	cPath := C.CString(AKIS_LIB_PATH)
 	defer C.free(unsafe.Pointer(cPath))
 

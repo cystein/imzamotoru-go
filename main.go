@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -162,7 +163,11 @@ func cardWorker() {
 		select {
 		case job := <-jobQueue:
 			if p == nil {
-				job.Reply <- ResponseMessage{Status: "error", Error: "Akıllı kart sürücüsü bulunamadı/başlatılamadı. Kart okuyucu sürücünüzün kurulu olduğundan emin olun; uygulama arka planda periyodik olarak yeniden deniyor."}
+				msg := sonSurucuTeshisMesaji
+				if msg == "" {
+					msg = "Akıllı kart sürücüsü bulunamadı/başlatılamadı."
+				}
+				job.Reply <- ResponseMessage{Status: "error", Error: msg + " (Uygulama arka planda periyodik olarak yeniden deniyor.)"}
 				continue
 			}
 			switch job.Action {
@@ -208,6 +213,31 @@ func cardWorker() {
 	}
 }
 
+// ErrSurucuHicKurulmamis: initDriver() sistemde bilinen HİÇBİR sürücü dosyası (System32/SysWOW64
+// içinde akisp11.dll vb. hiçbiri yok) bulamadığında bu sentinel'i sarmalayarak döner. Bu, "sürücü
+// hiç kurulu değil" durumunu "sürücü kurulu ama başlatılamadı (örn. mimari uyuşmazlığı)"
+// durumundan ayırt etmemizi sağlar — ikisi eczacı için tamamen farklı eylemler gerektirir.
+var ErrSurucuHicKurulmamis = errors.New("bilinen bir akıllı kart sürücüsü sistemde bulunamadı")
+
+// sonSurucuTeshisMesaji, cardWorker()'ın sürücü olmadan gelen bir işe (list_certs/sign_pades)
+// verdiği yanıtta eczacıya gösterdiği, en güncel ve SPESİFİK sürücü durumu açıklamasıdır.
+// surucuyuDeneYeninenBildir() her denemede günceller — böylece web arayüzündeki hata mesajı
+// artık sabit/genel bir cümle değil, "sürücü hiç kurulu değil" ile "kurulu ama mimarisi
+// uyumsuz" gibi kök nedene özgü, eczacının ne yapması gerektiğini söyleyen bir metin olur.
+var sonSurucuTeshisMesaji string
+
+// surucuHatasiKullaniciMesaji, initDriver()'ın döndürdüğü teknik hatayı eczacının anlayıp
+// aksiyon alabileceği bir Türkçe cümleye çevirir.
+func surucuHatasiKullaniciMesaji(err error) string {
+	if errors.Is(err, ErrSurucuHicKurulmamis) {
+		return "Bilgisayarınızda akıllı kart okuyucu sürücüsü kurulu değil. Lütfen kartınızın (AKİS, TÜRKTRUST vb.) resmi sürücüsünü kurup uygulamayı yeniden başlatın."
+	}
+	if strings.Contains(err.Error(), "ERROR_BAD_EXE_FORMAT") {
+		return "Bilgisayarınızda bulunan kart sürücüsü mimarinizle uyumsuz (32-bit/64-bit karışıklığı). Lütfen sürücüyü kaldırıp kart üreticinizin sitesinden doğru (64-bit) sürümü yeniden kurun."
+	}
+	return "Kart okuyucu sürücünüz bulundu ama başlatılamadı. Kart okuyucunuzu çıkarıp tekrar takmayı veya bilgisayarı yeniden başlatmayı deneyin; sorun sürerse destek ile iletişime geçin."
+}
+
 // surucuyuDeneYeninenBildir, initDriver()'ı bir kez dener; başarısızsa merkezi bildir()
 // üzerinden (Kritik/SURUCU_YOK) haber verir ve nil döner — çağıran taraf (cardWorker) bunu
 // öldürücü bir hata olarak değil, "şimdilik yok, sonra tekrar denenecek" olarak ele alır.
@@ -215,6 +245,7 @@ func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 	p, err := initDriver()
 	if err != nil {
 		log.Printf("⚠️ [WORKER] SÜRÜCÜ BAŞLATILAMADI: %v", err)
+		sonSurucuTeshisMesaji = surucuHatasiKullaniciMesaji(err)
 		// PKCS#11 DLL'i bulunamasa/başlatılamasa bile PC/SC (winscard.dll) seviyesinde okuyucu
 		// ve kart görünüyor mu diye ayrıca bakıyoruz — rapora eklenen bu teşhis, "okuyucu hiç
 		// yok" ile "kart var ama bizim aday listemizde olmayan bir sürücü lazım" ayrımını
@@ -222,6 +253,7 @@ func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 		bildir(SeviyeKritik, "SURUCU_YOK", fmt.Sprintf("Akıllı kart sürücüsü bulunamadı/başlatılamadı: %v | PC/SC teşhisi: %s", err, pcscTeshisi()))
 		return nil
 	}
+	sonSurucuTeshisMesaji = ""
 	log.Println("✅ [WORKER] Sürücü Thread'e başarıyla bağlandı, emirler bekleniyor...")
 	bildir(SeviyeBilgi, "SURUCU_OK", "Akıllı kart sürücüsü başarıyla başlatıldı.")
 	return p
@@ -232,17 +264,25 @@ func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 // vermez. Önceki sürümdeki "(3 Hak)" / "2 Hak Kaldı" gibi metinler uydurma/varsayılan sayılardı;
 // gerçek kartın azami hakkı farklıysa yanıltıcı olabiliyordu. Bu yüzden artık sadece donanımın
 // garanti ettiği nitel durumları gösteriyoruz.
+// getPinStatus SADECE bilgilendirme amaçlıdır — arayüzde gösterilecek bir ön-izlenim döndürür,
+// kesin bir hüküm değil. BURADAN merkezi bildir() ÇAĞRILMAZ: GetTokenInfo().Flags, OpenSession
+// gerektirmeyen, session dışı bir sorgu olduğundan, marjinal okuyucu/kart teması ya da art arda
+// gelen session aç/kapa trafiği yüzünden ara sıra yanlış (bozuk) değer dönebiliyor — Go seviyesinde
+// err == nil dönse bile. 2026-07-28'de tam bu senaryo yaşandı: bir eczanede burada "PIN kilitli"
+// okundu (Kritik rapor gitti, imza butonu kilitlendi), ama 1 dakika sonra AYNI kart gerçek
+// Login()'i sorunsuz geçti — yani ilk okuma yanlış pozitifti. Kartın GERÇEKTEN kilitli olduğunun
+// TEK güvenilir kanıtı Login()'in döndürdüğü CKR_PIN_LOCKED hata koludur (bkz. signHash/
+// signPAdESAndSync) — bildir() ve gerçek engelleme kararı SADECE oradan verilir.
 func getPinStatus(p *pkcs11.Ctx, slot uint) (string, bool) {
 	info, err := p.GetTokenInfo(slot)
 	if err != nil {
 		return "Bilinmiyor", false
 	}
+	log.Printf("[DEBUG] TokenInfo.Flags ham değeri: 0x%08X (kart: %s)", info.Flags, info.Label)
 	if info.Flags&pkcs11.CKF_USER_PIN_LOCKED != 0 {
-		bildir(SeviyeKritik, "PIN_KILITLI", fmt.Sprintf("Kart PIN'i kilitlendi (PUK gerekli) — kart: %s", info.Label))
-		return "⛔ KİLİTLİ! (PUK Kodu Gerekli)", true
+		return "⛔ KİLİTLİ GÖRÜNÜYOR (PUK Kodu Gerekebilir)", true
 	}
 	if info.Flags&pkcs11.CKF_USER_PIN_FINAL_TRY != 0 {
-		bildir(SeviyeUyari, "PIN_SON_DENEME", fmt.Sprintf("Kart PIN'i son deneme hakkında — kart: %s", info.Label))
 		return "🔴 SON DENEME HAKKI! Bir yanlış giriş daha kartı tamamen kilitler.", false
 	}
 	if info.Flags&pkcs11.CKF_USER_PIN_COUNT_LOW != 0 {
@@ -314,10 +354,10 @@ func signHash(p *pkcs11.Ctx, pin, hashBase64, certID string) (string, error) {
 	}
 	slot := slots[0]
 
-	pinMesaj, kilitliMi := getPinStatus(p, slot)
-	if kilitliMi {
-		return "", fmt.Errorf("KART PIN KODU KİLİTLİ! PUK KODU İLE AÇMANIZ GEREKMEKTEDİR.")
-	}
+	// NOT: Burada artık getPinStatus()'un kilitliMi sonucuna bakarak Login()'den ÖNCE
+	// işlemi reddetmiyoruz — o bayrak yanlış pozitif verebiliyor (bkz. getPinStatus yorumu).
+	// pinMesaj yalnızca aşağıdaki hata mesajında bilgi amaçlı gösteriliyor.
+	pinMesaj, _ := getPinStatus(p, slot)
 
 	session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
 	if err != nil {
@@ -326,6 +366,12 @@ func signHash(p *pkcs11.Ctx, pin, hashBase64, certID string) (string, error) {
 	defer p.CloseSession(session)
 
 	if err := p.Login(session, pkcs11.CKU_USER, pin); err != nil {
+		// Kartın GERÇEKTEN kilitli olduğunun tek güvenilir kanıtı budur — Login()'in kendisinin
+		// döndürdüğü CKR_PIN_LOCKED. Sadece bu durumda Kritik rapor gönderiyoruz.
+		if pErr, ok := err.(pkcs11.Error); ok && pErr == pkcs11.CKR_PIN_LOCKED {
+			bildir(SeviyeKritik, "PIN_KILITLI", fmt.Sprintf("Kart PIN'i GERÇEKTEN kilitli (Login CKR_PIN_LOCKED) — sertifika ID: %s", certID))
+			return "", fmt.Errorf("❌ KART PIN KODU KİLİTLİ! PUK KODU İLE AÇMANIZ GEREKMEKTEDİR.")
+		}
 		log.Println("❌ [UYARI] PIN DOĞRULAMA BAŞARISIZ OLDU!")
 		return "", fmt.Errorf("❌ PIN HATALI! Lütfen kontrol edin. Kart Durumu: %s | Hata: %v", pinMesaj, err)
 	}
@@ -1463,6 +1509,13 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 	defer p.CloseSession(session)
 
 	if err := p.Login(session, pkcs11.CKU_USER, pin); err != nil {
+		// Kartın GERÇEKTEN kilitli olduğunun tek güvenilir kanıtı budur — Login()'in kendisinin
+		// döndürdüğü CKR_PIN_LOCKED. GetTokenInfo().Flags'teki bayrağa (bkz. getPinStatus) artık
+		// güvenmiyoruz; gerçek imza yolu (bu fonksiyon) buraya kadar o bayrağa hiç bakmadan geldi.
+		if pErr, ok := err.(pkcs11.Error); ok && pErr == pkcs11.CKR_PIN_LOCKED {
+			bildir(SeviyeKritik, "PIN_KILITLI", fmt.Sprintf("Kart PIN'i GERÇEKTEN kilitli (Login CKR_PIN_LOCKED) — sertifika ID: %s, döküm: %s", certID, dokumNo))
+			return fmt.Errorf("❌ KART PIN KODU KİLİTLİ! PUK KODU İLE AÇMANIZ GEREKMEKTEDİR.")
+		}
 		return fmt.Errorf("❌ PIN Hatalı veya Kart Okunamadı! Lütfen PIN kodunuzu kontrol edip tekrar deneyin. (Detay: %v)", err)
 	}
 	defer p.Logout(session)
