@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	update "github.com/inconshreveable/go-update"
@@ -44,6 +45,38 @@ type latestVersionInfo struct {
 	URL       string `json:"url"`
 	SHA256    string `json:"sha256"`
 	Signature string `json:"signature"`
+	// MinSupportedVersion — UZAKTAN KILL SWITCH. Normal yayınlarda BOŞ bırakılır (davranışta
+	// hiçbir değişiklik olmaz). Sahada GEÇERSİZ İMZA ÜRETEN bir sürüm bulunursa (bu projede
+	// daha önce iki kez oldu: RSA DigestInfo ve ECDSA r‖s kodlama hataları), bu alana en düşük
+	// GÜVENLİ sürüm yazılır — bundan daha eski bir APP_VERSION ile çalışan istemciler, henüz
+	// kendileri güncellenmemiş olsa bile (self-update 6 saate kadar gecikebilir) imza atmayı
+	// hemen reddeder. Elle, tools/sign_release'in opsiyonel 6. argümanıyla set edilir; ayrı bir
+	// acil durum aracı — normal ./release.sh akışı bu alana asla otomatik bir şey yazmaz.
+	MinSupportedVersion string `json:"min_supported_version,omitempty"`
+}
+
+// surumKarsilastir basit bir "X.Y.Z" semver-lite karşılaştırıcısı — bu projede sürüm numaraları
+// hep bu üç parçalı biçimde. a<b ise -1, a==b ise 0, a>b ise 1 döner. Ayrıştırılamayan bir parça
+// 0 sayılır (asla panic etmez — kill switch'in kendisi bir hataya çarpıp devre dışı kalmasın).
+func surumKarsilastir(a, b string) int {
+	ap := strings.Split(a, ".")
+	bp := strings.Split(b, ".")
+	for i := 0; i < 3; i++ {
+		var av, bv int
+		if i < len(ap) {
+			fmt.Sscanf(ap[i], "%d", &av)
+		}
+		if i < len(bp) {
+			fmt.Sscanf(bp[i], "%d", &bv)
+		}
+		if av != bv {
+			if av < bv {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }
 
 // checkForUpdates, açılışta bir kez ve sonrasında 6 saatte bir sürüm kontrolü yapar.
@@ -66,6 +99,20 @@ func guncellemeyiDenetle() {
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		log.Printf("[UPDATE] Sürüm bilgisi okunamadı: %v", err)
 		return
+	}
+
+	// UZAKTAN KILL SWITCH — yeni bir sürüm çıkmış olsun ya da olmasın, HER kontrolde bakılır
+	// (bir kereye mahsus değil): sunucudaki latest.json bu istemcinin sürümünü artık desteklemez
+	// diyorsa, imzalama hemen durdurulur. bkz. latestVersionInfo.MinSupportedVersion.
+	if info.MinSupportedVersion != "" && surumKarsilastir(APP_VERSION, info.MinSupportedVersion) < 0 {
+		mesaj := fmt.Sprintf("Bu istemci sürümü (v%s) artık güvenli kabul edilmiyor (asgari desteklenen: v%s) — güvenlik nedeniyle imzalama durduruldu. Program kendini güncelleyene kadar bekleyin ya da en güncel installer'ı yeniden kurun.", APP_VERSION, info.MinSupportedVersion)
+		if imzalamaEngelMesaji() != mesaj {
+			log.Println("⛔ [UPDATE] KILL SWITCH devrede:", mesaj)
+			bildir(SeviyeKritik, "SURUM_DESTEKLENMIYOR", mesaj)
+		}
+		imzalamaEngeli.Store(mesaj)
+	} else {
+		imzalamaEngeli.Store("") // izin verilen aralığa dönüldü (ör. sunucu latest.json'ı düzeltti)
 	}
 
 	if info.Version == "" || info.Version == APP_VERSION {
@@ -125,6 +172,16 @@ func guncellemeyiDenetle() {
 	// devrediyoruz (Apply() içinde: önce sha256 karşılaştırılır, sonra ECDSA imza doğrulanır,
 	// ikisi de geçmezse dosyaya HİÇ dokunulmadan hata döner).
 	opts := update.Options{Checksum: shaBytes, Signature: sigBytes}
+
+	// GERİ ALMA GÜVENLİK AĞI: bir önceki (çalışan) exe'yi sakla. sha256/imza kontrolü SAHTE/bozuk
+	// bir dosyaya karşı korur ama derlemesi geçen, imzası geçerli, sha256'sı doğru, ama ÇALIŞMA
+	// ZAMANINDA hata veren bir sürüm yayınlanırsa bu olmadan geri dönüş yolu yoktu — her eczane
+	// otomatik o sürüme geçerdi. `os.Executable()` başarısız olursa (çok nadir) OldSavePath boş
+	// kalır, eski davranışa (yedeksiz güncelleme) sessizce düşülür — güncellemeyi engellemez.
+	if exePath, exeErr := os.Executable(); exeErr == nil {
+		opts.OldSavePath = exePath + ".onceki-surum"
+	}
+
 	if err := opts.SetPublicKeyPEM([]byte(RELEASE_PUBLIC_KEY_PEM)); err != nil {
 		log.Printf("[UPDATE] ⛔ Gömülü açık anahtar okunamadı (bu bir kod hatası, sunucudan bağımsız): %v", err)
 		return
