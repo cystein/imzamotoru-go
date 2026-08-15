@@ -22,7 +22,9 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/digitorus/pdf"
@@ -41,6 +43,45 @@ const (
 // (Varsayılan http.Get/http.Post süresiz bekleyebilir; Node çökerse/ağ takılırsa
 // PKCS11 oturumu da beraberinde süresiz asılı kalırdı.)
 var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// imzalamaEngeli — uzaktan "kill switch". guncellemeyiDenetle() (update_windows.go), sunucudaki
+// latest.json'da "min_supported_version" alanı bu çalışan APP_VERSION'dan yüksekse bunu set
+// eder; cardWorker() imza işlemlerini (sign_hash/sign_pades) bu doluysa reddeder. Amaç: sahada
+// GEÇERSİZ İMZA ÜRETEN bir sürüm bulunursa (bu projede daha önce iki kez oldu — RSA DigestInfo
+// ve ECDSA r‖s kodlama hataları), düzeltmenin self-update ile yayılmasını (6 saat) beklemeden
+// etkilenen istemcileri hemen durdurabilmek. atomic.Value kullanılıyor çünkü bu değeri yazan
+// (checkForUpdates goroutine'i) ve okuyan (cardWorker goroutine'i) farklı goroutine'ler.
+var imzalamaEngeli atomic.Value // string; hiç Store edilmemiş ya da "" = engel yok
+
+func imzalamaEngelMesaji() string {
+	v := imzalamaEngeli.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
+}
+
+// gorutinGuvenliBaslat, verilen fonksiyonu ayrı bir goroutine'de çalıştırır ve içinde
+// BEKLENMEYEN bir panic olursa (Go'da recover edilmeyen bir panic normalde tüm süreci
+// beraberinde götürür) süreci çökertmek yerine durumu loglayıp sunucuya son bir "PANIC"
+// bildirimi göndermeyi dener. Amaç çökmeyi önlemek değil GÖRÜNÜR KILMAK — bugüne kadar hiçbir
+// panic bize hiç bildirilmedi, eczacı tarafında sessizce "program kapandı" olarak kayboluyordu.
+// Panic'i üreten goroutine sona erer (o alt sistem durur — ör. cardWorker çökerse imzalama artık
+// çalışmaz) ama SÜREÇ ayakta kalır: diğer goroutine'ler (checkForUpdates, startServer) çalışmaya
+// devam eder, böylece bir düzeltme yayınlanırsa self-update hâlâ devreye girebilir.
+func gorutinGuvenliBaslat(isim string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				mesaj := fmt.Sprintf("goroutine '%s' beklenmeyen bir hatayla çöktü: %v\n%s", isim, r, debug.Stack())
+				log.Println("💥 [PANIC]", mesaj)
+				bildir(SeviyeKritik, "PANIC", mesaj)
+				time.Sleep(2 * time.Second) // bildir()'in arka plandaki POST goroutine'i gönderebilsin diye kısa bir pay
+			}
+		}()
+		fn()
+	}()
+}
 
 type RequestMessage struct {
 	Action  string `json:"action"`
@@ -179,6 +220,10 @@ func cardWorker() {
 					job.Reply <- ResponseMessage{Status: "success", Data: data}
 				}
 			case "sign_hash":
+				if engelMesaji := imzalamaEngelMesaji(); engelMesaji != "" {
+					job.Reply <- ResponseMessage{Status: "error", Error: engelMesaji}
+					continue
+				}
 				if job.CertID == "" {
 					job.Reply <- ResponseMessage{Status: "error", Error: "Sertifika ID boş olamaz!"}
 					continue
@@ -190,6 +235,10 @@ func cardWorker() {
 					job.Reply <- ResponseMessage{Status: "success", Data: sig}
 				}
 			case "sign_pades":
+				if engelMesaji := imzalamaEngelMesaji(); engelMesaji != "" {
+					job.Reply <- ResponseMessage{Status: "error", Error: engelMesaji}
+					continue
+				}
 				if job.CertID == "" || job.DokumNo == "" {
 					job.Reply <- ResponseMessage{Status: "error", Error: "Sertifika ID veya Döküm No boş olamaz!"}
 					continue
@@ -226,9 +275,24 @@ var ErrSurucuHicKurulmamis = errors.New("bilinen bir akıllı kart sürücüsü 
 // uyumsuz" gibi kök nedene özgü, eczacının ne yapması gerektiğini söyleyen bir metin olur.
 var sonSurucuTeshisMesaji string
 
-// surucuHatasiKullaniciMesaji, initDriver()'ın döndürdüğü teknik hatayı eczacının anlayıp
-// aksiyon alabileceği bir Türkçe cümleye çevirir.
-func surucuHatasiKullaniciMesaji(err error) string {
+// surucuHatasiKullaniciMesaji, initDriver()'ın döndürdüğü teknik hatayı VE PC/SC seviyesindeki
+// teşhisi (kategori) eczacının anlayıp aksiyon alabileceği bir Türkçe cümleye çevirir.
+// Üç PC/SC kategorisi üç FARKLI kök nedeni işaret eder — üçüne de aynı "sürücü kurun" mesajını
+// göstermek yanlış yönlendirme olurdu (bkz. EL_KITABI.md §9.1, 2026-08-15 log analizi: olayların
+// %63'ü aslında sürücü sorunu bile değildi).
+func surucuHatasiKullaniciMesaji(err error, kategori PcscKategori) string {
+	switch kategori {
+	case PcscKaynakYoneticisiKapali:
+		return "Windows'un Akıllı Kart Hizmeti şu an çalışmıyor — bu bir sürücü sorunu DEĞİL. " +
+			"Kart okuyucunuzun bilgisayara takılı olduğundan emin olun, ardından bilgisayarınızı " +
+			"yeniden başlatın. Sorun sürerse BT desteğinize 'Smart Card servisi kapalı' olduğunu iletin."
+	case PcscOkuyucuYok:
+		return "Bilgisayarınızda bir akıllı kart okuyucu bulunamadı. Kart okuyucunuzun USB'ye " +
+			"takılı olduğundan emin olun."
+	}
+
+	// PcscOkuyucuVarSurucuGerekli ya da PcscBilinmiyor (Linux/teşhis başarısız) — burada gerçekten
+	// bir sürücü eksikliği söz konusu, initDriver()'ın kendi hatasına göre spesifikleştiriyoruz.
 	if errors.Is(err, ErrSurucuHicKurulmamis) {
 		return "Bilgisayarınızda akıllı kart okuyucu sürücüsü kurulu değil. Lütfen kartınızın (AKİS, TÜRKTRUST vb.) resmi sürücüsünü kurup uygulamayı yeniden başlatın."
 	}
@@ -238,22 +302,56 @@ func surucuHatasiKullaniciMesaji(err error) string {
 	return "Kart okuyucu sürücünüz bulundu ama başlatılamadı. Kart okuyucunuzu çıkarıp tekrar takmayı veya bilgisayarı yeniden başlatmayı deneyin; sorun sürerse destek ile iletişime geçin."
 }
 
+// sonBildirilenTeshis, en son SUNUCUYA bildirilen (log değil, bildir() ile POST edilen) tam
+// teşhis metnidir — aynı metin tekrar üretilirse (5 dakikalık ticker aynı bozuk durumu tekrar
+// tekrar buluyorsa) sunucuya yeniden POST ATILMAZ, sadece yerel logda kalır. 2026-08-15 log
+// analizinde tek bir makine 24 saatte 295 kez aynı olayı bildirmişti — bu dedup, 1167 satırlık
+// gürültüyü gerçek olay sayısına indirir. Durum düzelince ("" atanınca) bir sonraki bozulma
+// yeniden bildirilir.
+var sonBildirilenTeshis string
+
 // surucuyuDeneYeninenBildir, initDriver()'ı bir kez dener; başarısızsa merkezi bildir()
-// üzerinden (Kritik/SURUCU_YOK) haber verir ve nil döner — çağıran taraf (cardWorker) bunu
-// öldürücü bir hata olarak değil, "şimdilik yok, sonra tekrar denenecek" olarak ele alır.
+// üzerinden (Kritik/SURUCU_YOK, ilk oluşumda) haber verir ve nil döner — çağıran taraf
+// (cardWorker) bunu öldürücü bir hata olarak değil, "şimdilik yok, sonra tekrar denenecek"
+// olarak ele alır.
 func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 	p, err := initDriver()
 	if err != nil {
-		log.Printf("⚠️ [WORKER] SÜRÜCÜ BAŞLATILAMADI: %v", err)
-		sonSurucuTeshisMesaji = surucuHatasiKullaniciMesaji(err)
 		// PKCS#11 DLL'i bulunamasa/başlatılamasa bile PC/SC (winscard.dll) seviyesinde okuyucu
-		// ve kart görünüyor mu diye ayrıca bakıyoruz — rapora eklenen bu teşhis, "okuyucu hiç
-		// yok" ile "kart var ama bizim aday listemizde olmayan bir sürücü lazım" ayrımını
-		// bizim tarafımızdan (uzaktan, eczaneye gitmeden) yapabilmemizi sağlıyor.
-		bildir(SeviyeKritik, "SURUCU_YOK", fmt.Sprintf("Akıllı kart sürücüsü bulunamadı/başlatılamadı: %v | PC/SC teşhisi: %s", err, pcscTeshisi()))
+		// ve kart görünüyor mu diye ayrıca bakıyoruz — bu teşhis, "okuyucu hiç yok" ile "Windows
+		// servisi kapalı" ile "kart var ama bizim aday listemizde olmayan bir sürücü lazım"
+		// ayrımını bizim tarafımızdan (uzaktan, eczaneye gitmeden) yapabilmemizi sağlıyor.
+		kategori, pcscDetay := pcscTeshisi()
+		log.Printf("⚠️ [WORKER] SÜRÜCÜ BAŞLATILAMADI: %v | PC/SC: %s", err, pcscDetay)
+		sonSurucuTeshisMesaji = surucuHatasiKullaniciMesaji(err, kategori)
+
+		// Kaynak Yöneticisi kapalıysa başlatmayı dene — çoğu zaman yönetici izni ister, garantisi
+		// yok ama denemenin bedeli yok. Başarılı olursa sürücüyü HEMEN bir kez daha dene, 5 dakika
+		// beklemeye gerek kalmasın.
+		if kategori == PcscKaynakYoneticisiKapali {
+			basarili, servisDetay := scardSvrBaslatmayiDene()
+			log.Printf("[WORKER] SCardSvr başlatma denemesi: başarılı=%v | %s", basarili, servisDetay)
+			if basarili {
+				if p2, err2 := initDriver(); err2 == nil {
+					log.Println("✅ [WORKER] SCardSvr başlatıldıktan sonra sürücü ikinci denemede bağlandı.")
+					sonSurucuTeshisMesaji = ""
+					sonBildirilenTeshis = ""
+					bildir(SeviyeBilgi, "SURUCU_OK", "SCardSvr başlatıldıktan sonra sürücü bağlandı.")
+					return p2
+				}
+			}
+		}
+
+		tamMesaj := fmt.Sprintf("Akıllı kart sürücüsü bulunamadı/başlatılamadı: %v | PC/SC teşhisi: %s", err, pcscDetay)
+		if tamMesaj == sonBildirilenTeshis {
+			return nil // aynı teşhis daha önce sunucuya bildirildi, tekrar POST atma
+		}
+		sonBildirilenTeshis = tamMesaj
+		bildir(SeviyeKritik, "SURUCU_YOK", tamMesaj)
 		return nil
 	}
 	sonSurucuTeshisMesaji = ""
+	sonBildirilenTeshis = "" // düzeldi — bir dahaki bozulma yeniden bildirilsin
 	log.Println("✅ [WORKER] Sürücü Thread'e başarıyla bağlandı, emirler bekleniyor...")
 	bildir(SeviyeBilgi, "SURUCU_OK", "Akıllı kart sürücüsü başarıyla başlatıldı.")
 	return p
@@ -1475,8 +1573,12 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 	log.Printf("[PAdES-1] Döküm: %s için PAdES süreci başladı...", dokumNo)
 
 	// 1. Sunucudan imzasız ham PDF'i indir (JWT jetonuyla korumalı rota)
-	pdfUrl := fmt.Sprintf("%s/api/ornekleme/download/%s?token=%s", NODE_API_URL, url.PathEscape(dokumNo), url.QueryEscape(token))
-	log.Printf("[PAdES-2] Ham PDF sunucudan çekiliyor: %s/api/ornekleme/download/%s", NODE_API_URL, dokumNo)
+	// NOT: path /api/itiraz/* — eskiden /api/ornekleme/* idi, uygulama artık hem örnekleme hem
+	// kesinti itirazını kapsadığı için sunucu tarafında yeniden adlandırıldı (v1.3.0). Sunucu,
+	// eski path'i geçiş süresince paralel olarak da kabul etmeye devam ediyor (bkz. EL_KITABI.md
+	// §4, §9.3) — ama yeni kurulan/güncellenen istemciler doğrudan yeni path'i kullanmalı.
+	pdfUrl := fmt.Sprintf("%s/api/itiraz/download/%s?token=%s", NODE_API_URL, url.PathEscape(dokumNo), url.QueryEscape(token))
+	log.Printf("[PAdES-2] Ham PDF sunucudan çekiliyor: %s/api/itiraz/download/%s", NODE_API_URL, dokumNo)
 
 	resp, err := httpClient.Get(pdfUrl)
 	if err != nil {
@@ -1555,6 +1657,18 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 	cert, err := x509.ParseCertificate(valAttr[0].Value)
 	if err != nil {
 		return fmt.Errorf("Sertifika formatı ayrıştırılamadı (X509): %v", err)
+	}
+
+	// SERTİFİKA SÜRESİ KONTROLÜ — ikinci güvence: aynı kontrol zaten tarayıcı tarafında (PIN
+	// istenmeden önce, ornekleme.html) yapılıyor ve sunucu tarafında da gölge modda tespit
+	// ediliyor (bkz. sgk-imza-platformu EL_KITABI.md §4.6) — burası savunma-derinliği, tarayıcı
+	// kontrolü bir şekilde atlanırsa (bayat önbellek, ileride farklı bir kod yolu) diye. PKCS#11
+	// imza işlemi kartın özel anahtarıyla ham bir kriptografik işlemdir, sertifikanın geçerlilik
+	// tarihine hiç bakmaz — bu kontrolü BİZ koymazsak hiç kimse koymuyor demektir.
+	simdi := time.Now()
+	if simdi.Before(cert.NotBefore) || simdi.After(cert.NotAfter) {
+		return fmt.Errorf("❌ Bu sertifikanın geçerlilik süresi (%s – %s) imzalama anını kapsamıyor. Süresi dolmuş/henüz başlamamış bir sertifikayla imza atılamaz.",
+			cert.NotBefore.Format("2006-01-02"), cert.NotAfter.Format("2006-01-02"))
 	}
 
 	var mech *pkcs11.Mechanism
@@ -1644,10 +1758,13 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 		"sertifika_bin": sertifikaBase64,
 		"imza_base64":   signedBase64,
 		"upload_token":  token,
+		// Hangi imza motoru sürümünün imzaladığı — geriye dönük hata ayıklama/istatistik için
+		// (ör. "bu 5 evrak da 1.2.1 ile imzalanmış, o sürümde bilinen X hatası vardı" diyebilmek).
+		"imza_motoru_surumu": APP_VERSION,
 	}
 	jsonPayload, _ := json.Marshal(payload)
 
-	postResp, err := httpClient.Post(fmt.Sprintf("%s/api/ornekleme/save_signed", NODE_API_URL), "application/json", bytes.NewBuffer(jsonPayload))
+	postResp, err := httpClient.Post(fmt.Sprintf("%s/api/itiraz/save_signed", NODE_API_URL), "application/json", bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return fmt.Errorf("İmzalı dosya sunucuya gönderilemedi (Ağ Hatası): %v", err)
 	}
