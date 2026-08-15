@@ -5,9 +5,16 @@
 # NOT: Bu script SADECE self-update kanalını (KolitakipIMZA.exe.gz + latest.json)
 # günceller — Program Files'a taze kurulum yapan installer'ı (KolitakipIMZA-Setup.exe)
 # GÜNCELLEMEZ. Installer'ı da tazelemek istiyorsanız (yeni eczane kurulumları en son
-# sürümü doğrudan alsın diye), üretilen KolitakipIMZA.exe'yi Windows'lu birine gönderip
-# installer/KolitakipIMZA.iss'i Inno Setup ile yeniden derletip çıkan
-# KolitakipIMZA-Setup.exe'yi de aynı $DEST klasörüne koymanız gerekiyor.
+# sürümü doğrudan alsın diye), .github/workflows/build-installer.yml'yi tetikleyin
+# (bkz. EL_KITABI.md §7, Adım 5).
+#
+# KolitakipIMZA.exe.gz (~6-7MB) artık bizim sunucumuz yerine GitHub Releases'ten
+# dağıtılıyor (2026-08-15) — sunucumuzun upload bant genişliği düşük, GitHub'ın CDN'i
+# çok daha hızlı ve bizim hattımızı hiç yormuyor. latest.json HÂLÂ bizim sunucumuzda
+# kalıyor (birkaç yüz bayt, sorun değil) — Go istemcisindeki latestVersionURL sabiti
+# HİÇ DEĞİŞMEDİ, yani bu değişiklik mevcut hiçbir kurulumu etkilemiyor, yeni bir Go
+# sürümü yayınlamaya gerek yok. Sadece latest.json'ın İÇİNDEKİ "url" alanı artık
+# GitHub'ı gösteriyor.
 set -e
 
 VERSION="$1"
@@ -23,7 +30,15 @@ if [ ! -f "$PRIVATE_KEY" ]; then
 	exit 1
 fi
 
+if ! command -v gh >/dev/null 2>&1; then
+	echo "HATA: gh (GitHub CLI) bulunamadı — GitHub Release'e yükleme için gerekli."
+	exit 1
+fi
+
 cd "$(dirname "$0")"
+
+REPO="cystein/imzamotoru-go"
+TAG="v$VERSION"
 
 sed -i "s/const APP_VERSION = \".*\"/const APP_VERSION = \"$VERSION\"/" version.go
 sed -i "s/#define MyAppVersion \".*\"/#define MyAppVersion \"$VERSION\"/" installer/KolitakipIMZA.iss
@@ -31,18 +46,31 @@ sed -i "s/#define MyAppVersion \".*\"/#define MyAppVersion \"$VERSION\"/" instal
 ./build_windows.sh
 
 DEST="$HOME/claude_projeler/sgk-imza-platformu/public/imza-motoru"
-DOWNLOAD_URL="https://itiraz.sgkkolitakip.web.tr/imza-motoru/KolitakipIMZA.exe.gz"
+# Büyük dosya (exe.gz) artık GitHub Releases'ten iniyor — DOWNLOAD_URL burayı gösteriyor.
+# latest.json'ın kendisi küçük olduğu için hâlâ bizim sunucumuzdan servis ediliyor.
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/KolitakipIMZA.exe.gz"
 
 # sha256 + ECDSA imzası burada, imzalanmamış (gzip'siz) exe üzerinden üretiliyor — istemci de
 # indirdiğini gzip'ten çıkardıktan SONRA aynı ham byte'ları doğruluyor.
 go run ./tools/sign_release "$PRIVATE_KEY" KolitakipIMZA.exe "$VERSION" "$DOWNLOAD_URL" "$DEST/latest.json"
 
 gzip -9 -f -c KolitakipIMZA.exe > KolitakipIMZA.exe.gz
-cp KolitakipIMZA.exe.gz "$DEST/KolitakipIMZA.exe.gz"
+
+# Aynı $TAG altında installer job'ı (build-installer.yml) ile paylaşılan bir GitHub Release
+# kullanılıyor — o etiket zaten varsa (installer önce yayınlanmışsa) asset eklenir/üzerine
+# yazılır (--clobber, idempotent); yoksa burada oluşturulur.
+if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+	gh release upload "$TAG" KolitakipIMZA.exe.gz --repo "$REPO" --clobber
+else
+	gh release create "$TAG" KolitakipIMZA.exe.gz --repo "$REPO" \
+		--title "KolitakipIMZA $TAG" --notes "Self-update kanalı yayını."
+fi
 
 echo ""
 echo "OK -> v$VERSION imzalanıp self-update kanalına yayınlandı."
+echo "  - KolitakipIMZA.exe.gz -> GitHub Release $TAG ($REPO)"
+echo "  - latest.json          -> $DEST/latest.json (bizim sunucumuz)"
 echo "Var olan kurulumlar 6 saat içinde (veya yeniden başlatılınca) otomatik güncellenecek."
 echo ""
-echo "Installer'ı da tazelemek isterseniz: KolitakipIMZA.exe'yi Windows'lu birine gönderip"
-echo "installer/KolitakipIMZA.iss'i derletin, çıkan KolitakipIMZA-Setup.exe'yi $DEST içine koyun."
+echo "Installer'ı da tazelemek isterseniz: git push sonrası"
+echo "  gh workflow run build-installer.yml --repo $REPO"
