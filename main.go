@@ -1750,13 +1750,18 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 	log.Println("[PAdES-4] Mühürlü PDF sunucuya geri yükleniyor (Sync)...")
 	signedBase64 := base64.StdEncoding.EncodeToString(outputBuffer.Bytes())
 	sertifikaBase64 := base64.StdEncoding.EncodeToString(valAttr[0].Value)
+	// NOT: "imza_base64" alanı kasıtlı olarak GÖNDERİLMİYOR — eskiden "signed_pdf" ile birebir
+	// aynı veriyi (imzalı PDF'in tamamı, base64) ikinci kez taşıyordu, gövdeyi gereksiz yere
+	// ~%45 büyütüyordu. Bu, 2026-08-19'da proxy'de ModSecurity'nin 128KB'lık gövde limitine
+	// (SecRequestBodyNoFilesLimit) çarpıp TÜM imzalama isteklerini günlerce kesmesine katkıda
+	// bulundu (bkz. EL_KITABI.md §9.12). Sunucu artık "imza_base64" DB sütununu "signed_pdf"
+	// alanından dolduruyor (eski istemcilerle geriye dönük uyumlu — bkz. app.js).
 	payload := map[string]string{
 		"dokum_no":      dokumNo,
 		"signed_pdf":    signedBase64,
 		"imzaci_tc":     cert.Subject.SerialNumber,
 		"imzaci_ad":     cert.Subject.CommonName,
 		"sertifika_bin": sertifikaBase64,
-		"imza_base64":   signedBase64,
 		"upload_token":  token,
 		// Hangi imza motoru sürümünün imzaladığı — geriye dönük hata ayıklama/istatistik için
 		// (ör. "bu 5 evrak da 1.2.1 ile imzalanmış, o sürümde bilinen X hatası vardı" diyebilmek).
