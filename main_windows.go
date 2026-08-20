@@ -139,8 +139,13 @@ func onTrayReady() {
 	// mDurum paket seviyesinde tanımlı (notify_windows.go) — burada sadece atanıyor, böylece
 	// bildir() farklı bir goroutine'den (cardWorker, update kontrolü) tepsi başlığını/tooltip'i
 	// sonradan güncelleyebiliyor.
-	mDurum = systray.AddMenuItem(fmt.Sprintf("Durum: Çalışıyor (v%s)", APP_VERSION), "")
+	mDurum = systray.AddMenuItem("Durum: Çalışıyor", "")
 	mDurum.Disable()
+	// mSurum, bildir()'in mDurum'u hata/uyarı metniyle ezdiği durumlarda bile sürüm bilgisinin
+	// kaybolmamasını sağlayan, hiç değişmeyen ayrı bir satır (bkz. EL_KITABI.md §9.11 — sahada
+	// bir hata sırasında sürüm bilgisinin tamamen kaybolduğu gözlemlendi).
+	mSurum := systray.AddMenuItem(fmt.Sprintf("Sürüm: v%s", APP_VERSION), "")
+	mSurum.Disable()
 	systray.AddSeparator()
 	mGuncelleKontrol := systray.AddMenuItem("🔄 Şimdi Güncellemeyi Kontrol Et", "Sunucudaki en güncel sürümü hemen kontrol et")
 	mTanilama := systray.AddMenuItem("📋 Tanılama Raporu Kaydet", "Destek için bir tanılama raporu dosyası oluştur ve aç")
