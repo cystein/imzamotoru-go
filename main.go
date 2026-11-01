@@ -35,8 +35,11 @@ import (
 )
 
 const (
-	PORT         = "53911"
-	NODE_API_URL = "https://itiraz.sgkkolitakip.web.tr" // Node.js Sunucu Adresin
+	PORT = "53911"
+	// v1.4.0'dan itibaren yeni adres. Eski adres (itiraz.*) aynı sunucuya gittiği ve kapanmayacağı
+	// için (eski sürümler ve imzalı PDF'lerdeki doğrulama bağlantıları oraya gidiyor) geçişte bir
+	// şey kırılmıyor.
+	NODE_API_URL = "https://eimza.sgkkolitakip.web.tr" // Node.js Sunucu Adresin
 )
 
 // Sunucuya giden indirme/yükleme istekleri için zaman aşımlı istemci.
@@ -113,8 +116,11 @@ var jobQueue = make(chan CardJob, 100)
 // Sadece izinli kaynaklardan gelen WebSocket bağlantılarını kabul et.
 // (Eskiden her origin'e izin veriliyordu — bilgisayarda açık başka bir sekme
 // sessizce list_certs çağırıp kullanıcının adını/TCKN'sini onaysız okuyabilirdi.)
+// Platform yalnız itiraz için olmaktan çıkınca (fatura iptal dilekçesi) adres eimza.* oldu;
+// itiraz.* sayfaları yeni adrese yönlendirilene kadar oradan açılan sayfalar da çalışmalı.
 var izinliKaynaklar = map[string]bool{
-	"https://itiraz.sgkkolitakip.web.tr": true,
+	"https://eimza.sgkkolitakip.web.tr":  true,
+	"https://itiraz.sgkkolitakip.web.tr": true, // eski adres
 	"http://localhost:3000":              true, // yerel geliştirme/test
 }
 
@@ -275,6 +281,11 @@ var ErrSurucuHicKurulmamis = errors.New("bilinen bir akıllı kart sürücüsü 
 // uyumsuz" gibi kök nedene özgü, eczacının ne yapması gerektiğini söyleyen bir metin olur.
 var sonSurucuTeshisMesaji string
 
+// surucuHazir, en son sürücü denemesinin başarılı olup olmadığını tutar. Tanılama raporu (tepsi
+// goroutine'i) okuduğu için atomic. Rapor eskiden sürücü çalışırken bile PC/SC'nin "okuyucu var,
+// sürücü gerekiyor" kategorisini basıyordu (bkz. EL_KITABI.md §9.13).
+var surucuHazir atomic.Bool
+
 // surucuHatasiKullaniciMesaji, initDriver()'ın döndürdüğü teknik hatayı VE PC/SC seviyesindeki
 // teşhisi (kategori) eczacının anlayıp aksiyon alabileceği bir Türkçe cümleye çevirir.
 // Üç PC/SC kategorisi üç FARKLI kök nedeni işaret eder — üçüne de aynı "sürücü kurun" mesajını
@@ -317,6 +328,7 @@ var sonBildirilenTeshis string
 func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 	p, err := initDriver()
 	if err != nil {
+		surucuHazir.Store(false)
 		// PKCS#11 DLL'i bulunamasa/başlatılamasa bile PC/SC (winscard.dll) seviyesinde okuyucu
 		// ve kart görünüyor mu diye ayrıca bakıyoruz — bu teşhis, "okuyucu hiç yok" ile "Windows
 		// servisi kapalı" ile "kart var ama bizim aday listemizde olmayan bir sürücü lazım"
@@ -336,6 +348,7 @@ func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 					log.Println("✅ [WORKER] SCardSvr başlatıldıktan sonra sürücü ikinci denemede bağlandı.")
 					sonSurucuTeshisMesaji = ""
 					sonBildirilenTeshis = ""
+					surucuHazir.Store(true)
 					bildir(SeviyeBilgi, "SURUCU_OK", "SCardSvr başlatıldıktan sonra sürücü bağlandı.")
 					return p2
 				}
@@ -352,6 +365,7 @@ func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 	}
 	sonSurucuTeshisMesaji = ""
 	sonBildirilenTeshis = "" // düzeldi — bir dahaki bozulma yeniden bildirilsin
+	surucuHazir.Store(true)
 	log.Println("✅ [WORKER] Sürücü Thread'e başarıyla bağlandı, emirler bekleniyor...")
 	bildir(SeviyeBilgi, "SURUCU_OK", "Akıllı kart sürücüsü başarıyla başlatıldı.")
 	return p

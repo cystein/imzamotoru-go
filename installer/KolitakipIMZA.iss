@@ -13,9 +13,9 @@
 ; duymadan çalışır. Chrome/Slack/Discord gibi pek çok uygulama tam bu sebeple bu deseni kullanır.
 
 #define MyAppName "KolitakipIMZA"
-#define MyAppVersion "1.3.1"
+#define MyAppVersion "1.4.0"
 #define MyAppPublisher "Kolitakip"
-#define MyAppURL "https://itiraz.sgkkolitakip.web.tr"
+#define MyAppURL "https://eimza.sgkkolitakip.web.tr"
 #define MyAppExeName "KolitakipIMZA.exe"
 
 [Setup]

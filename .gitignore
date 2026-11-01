@@ -12,3 +12,10 @@ KolitakipIMZA.zip
 
 # Yedek dosya
 main.go.orig.bak
+
+# El kitabı — bilerek ASLA commit edilmiyor. Sunucu IP'leri, DB şeması, güvenlik açığı detayları
+# (bulma/kanıtlama yöntemleri dahil) ve altyapı bilgisi içeriyor. Bu repo PUBLIC — dosya şu ana
+# kadar hiç commit edilmedi (git log --all ile doğrulandı) ama .gitignore'da olmaması, ileride
+# dikkatsizce çalıştırılacak bir "git add -A"nın bunu yanlışlıkla public'e göndermesine karşı
+# hiçbir koruma sağlamıyordu — bu satır o riski kapatıyor.
+EL_KITABI.md

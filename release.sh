@@ -1,6 +1,10 @@
 #!/bin/sh
 # Var olan kurulumlar için self-update paketini yayınlar.
-# Kullanım: ./release.sh 1.2.0
+# Kullanım: ./release.sh 1.2.0 [asgari-desteklenen-surum]
+#
+# İkinci argüman OPSİYONEL: verilirse latest.json'a min_supported_version yazılır, ondan eski
+# istemciler bir sonraki kontrolde imzalamayı durdurup güncellenir (bkz. tools/sign_release,
+# update_windows.go MinSupportedVersion). Normal yayında verilmez.
 #
 # NOT: Bu script SADECE self-update kanalını (KolitakipIMZA.exe.gz + latest.json)
 # günceller — Program Files'a taze kurulum yapan installer'ı (KolitakipIMZA-Setup.exe)
@@ -18,6 +22,7 @@
 set -e
 
 VERSION="$1"
+MIN_SURUM="$2"
 if [ -z "$VERSION" ]; then
 	echo "Kullanım: $0 <versiyon>  (örn: 1.2.0)"
 	exit 1
@@ -52,7 +57,7 @@ DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/KolitakipIMZA.exe.
 
 # sha256 + ECDSA imzası burada, imzalanmamış (gzip'siz) exe üzerinden üretiliyor — istemci de
 # indirdiğini gzip'ten çıkardıktan SONRA aynı ham byte'ları doğruluyor.
-go run ./tools/sign_release "$PRIVATE_KEY" KolitakipIMZA.exe "$VERSION" "$DOWNLOAD_URL" "$DEST/latest.json"
+go run ./tools/sign_release "$PRIVATE_KEY" KolitakipIMZA.exe "$VERSION" "$DOWNLOAD_URL" "$DEST/latest.json" ${MIN_SURUM:+"$MIN_SURUM"}
 
 gzip -9 -f -c KolitakipIMZA.exe > KolitakipIMZA.exe.gz
 

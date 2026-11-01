@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/getlantern/systray"
@@ -78,6 +79,19 @@ func tanilamaRaporuKaydet() {
 		PcscOkuyucuYok:              "okuyucu bulunamadı",
 		PcscOkuyucuVarSurucuGerekli: "okuyucu var, sürücü gerekiyor",
 	}[kategori]
+	// pcscTeshisi() sürücü durumunu bilmiyor; "okuyucu var" kategorisi yalnız sürücü
+	// başlatılamadıysa "sürücü gerekiyor" demek. Sürücü çalışıyorsa kartsız sanal okuyucuların
+	// (eToken/AKİS yazılımları birkaç tane açıyor) "kart bağlanamadı" satırları da hata değil.
+	surucuDurumu := sonSurucuTeshisMesaji
+	if surucuHazir.Load() {
+		surucuDurumu = "Sürücü başlatıldı, çalışıyor"
+		if kategori == PcscOkuyucuVarSurucuGerekli {
+			kategoriMetni = "okuyucu var, sürücü çalışıyor"
+			pcscDetay = strings.ReplaceAll(pcscDetay, "— okuyucu bağlı, kart takılı olmayabilir", "(bilgi) okuyucu bağlı, bu okuyucuda kart yok")
+		}
+	} else if surucuDurumu == "" {
+		surucuDurumu = "Sürücü henüz denenmedi"
+	}
 
 	rapor := fmt.Sprintf(
 		"KolitakipIMZA Tanılama Raporu\n"+
@@ -91,7 +105,7 @@ func tanilamaRaporuKaydet() {
 		time.Now().Format("2006-01-02 15:04:05"),
 		APP_VERSION,
 		runtime.GOOS, runtime.GOARCH,
-		sonSurucuTeshisMesaji,
+		surucuDurumu,
 		kategoriMetni,
 		pcscDetay,
 		func() string {
