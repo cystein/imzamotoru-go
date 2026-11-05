@@ -325,7 +325,7 @@ var sonBildirilenTeshis string
 // üzerinden (Kritik/SURUCU_YOK, ilk oluşumda) haber verir ve nil döner — çağıran taraf
 // (cardWorker) bunu öldürücü bir hata olarak değil, "şimdilik yok, sonra tekrar denenecek"
 // olarak ele alır.
-func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
+func surucuyuDeneYeninenBildir() *surucuSeti {
 	p, err := initDriver()
 	if err != nil {
 		surucuHazir.Store(false)
@@ -346,6 +346,7 @@ func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 			if basarili {
 				if p2, err2 := initDriver(); err2 == nil {
 					log.Println("✅ [WORKER] SCardSvr başlatıldıktan sonra sürücü ikinci denemede bağlandı.")
+					surucuOzetiniKaydet(p2)
 					sonSurucuTeshisMesaji = ""
 					sonBildirilenTeshis = ""
 					surucuHazir.Store(true)
@@ -363,6 +364,7 @@ func surucuyuDeneYeninenBildir() *pkcs11.Ctx {
 		bildir(SeviyeKritik, "SURUCU_YOK", tamMesaj)
 		return nil
 	}
+	surucuOzetiniKaydet(p)
 	sonSurucuTeshisMesaji = ""
 	sonBildirilenTeshis = "" // düzeldi — bir dahaki bozulma yeniden bildirilsin
 	surucuHazir.Store(true)
@@ -403,79 +405,93 @@ func getPinStatus(p *pkcs11.Ctx, slot uint) (string, bool) {
 	return "Normal", false
 }
 
-func listCertificates(p *pkcs11.Ctx) ([]map[string]any, error) {
+func listCertificates(s *surucuSeti) ([]map[string]any, error) {
 	log.Println("[INFO] Donanım taranıyor...")
-	slots, err := p.GetSlotList(true)
-	if err != nil || len(slots) == 0 {
-		return nil, fmt.Errorf("KART OKUYUCU BOŞ VEYA KART TAKILI DEĞİL!")
-	}
 
-	slot := slots[0]
-	pinMesaj, kilitliMi := getPinStatus(p, slot)
-	log.Printf("[INFO] Kart Durumu -> PIN: %s | Kilitli: %v", pinMesaj, kilitliMi)
-
-	session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
-	if err != nil {
-		return nil, fmt.Errorf("Oturum açılamadı: %v", err)
-	}
-	defer p.CloseSession(session)
-
-	p.FindObjectsInit(session, []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE)})
-	objs, _, _ := p.FindObjects(session, 10)
-	p.FindObjectsFinal(session)
-
+	// Tüm yüklü sürücülerin kartlı slotları taranır (bkz. surucu_secimi.go). Aynı kartı iki
+	// sürücü birden açabilirse sertifika bir kez listelenir.
 	var list []map[string]any
-	for _, obj := range objs {
-		attrs, _ := p.GetAttributeValue(session, obj, []*pkcs11.Attribute{
-			pkcs11.NewAttribute(pkcs11.CKA_ID, nil),
-			pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
-		})
-		if len(attrs) < 2 || attrs[1].Value == nil {
-			continue
+	gorulen := map[[32]byte]bool{}
+	_, err := s.kartOturumlari(func(k *kartOturumu) bool {
+		pinMesaj, kilitliMi := getPinStatus(k.p, k.slot)
+		log.Printf("[INFO] Kart Durumu (%s, slot %d) -> PIN: %s | Kilitli: %v", k.surucu, k.slot, pinMesaj, kilitliMi)
+
+		k.p.FindObjectsInit(k.session, []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE)})
+		objs, _, _ := k.p.FindObjects(k.session, 10)
+		k.p.FindObjectsFinal(k.session)
+
+		bulundu := false
+		for _, obj := range objs {
+			attrs, _ := k.p.GetAttributeValue(k.session, obj, []*pkcs11.Attribute{
+				pkcs11.NewAttribute(pkcs11.CKA_ID, nil),
+				pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
+			})
+			if len(attrs) < 2 || attrs[1].Value == nil {
+				continue
+			}
+			cert, err := x509.ParseCertificate(attrs[1].Value)
+			if err != nil {
+				continue
+			}
+			iz := sertifikaParmakIzi(attrs[1].Value)
+			if gorulen[iz] {
+				continue
+			}
+			gorulen[iz] = true
+			bulundu = true
+
+			algo := cert.PublicKeyAlgorithm.String()
+			log.Printf("[INFO] Bulunan Sertifika -> Sahibi: '%s' | Algoritma: '%s' | Sürücü: %s", cert.Subject.CommonName, algo, k.surucu)
+
+			list = append(list, map[string]any{
+				"id":         hex.EncodeToString(attrs[0].Value),
+				"sahibi":     cert.Subject.CommonName,
+				"tckn":       cert.Subject.SerialNumber,
+				"cert_data":  base64.StdEncoding.EncodeToString(attrs[1].Value),
+				"bitis":      cert.NotAfter.Format("2006-01-02"),
+				"pin_durumu": pinMesaj,
+				"kilitli":    kilitliMi,
+				"algoritma":  algo,
+			})
 		}
-		cert, err := x509.ParseCertificate(attrs[1].Value)
-		certBase64 := base64.StdEncoding.EncodeToString(attrs[1].Value)
+		if bulundu {
+			sonKullanilanSurucuyuKaydet(k)
+		}
+		return false // oturumu kapat, diğer slotlara da bak
+	})
+	if len(list) == 0 {
+		if errors.Is(err, ErrKartYok) {
+			return nil, fmt.Errorf("KART OKUYUCU BOŞ VEYA KART TAKILI DEĞİL!")
+		}
 		if err != nil {
-			continue
+			return nil, err
 		}
-
-		algo := cert.PublicKeyAlgorithm.String()
-		log.Printf("[INFO] Bulunan Sertifika -> Sahibi: '%s' | Algoritma: '%s'", cert.Subject.CommonName, algo)
-
-		list = append(list, map[string]any{
-			"id":         hex.EncodeToString(attrs[0].Value),
-			"sahibi":     cert.Subject.CommonName,
-			"tckn":       cert.Subject.SerialNumber,
-			"cert_data":  certBase64,
-			"bitis":      cert.NotAfter.Format("2006-01-02"),
-			"pin_durumu": pinMesaj,
-			"kilitli":    kilitliMi,
-			"algoritma":  algo,
-		})
 	}
 	log.Printf("[INFO] %d adet sertifika arayüze gönderildi.", len(list))
 	return list, nil
 }
 
-func signHash(p *pkcs11.Ctx, pin, hashBase64, certID string) (string, error) {
+func signHash(s *surucuSeti, pin, hashBase64, certID string) (string, error) {
 	log.Printf("[SIGN-1] İmza emri alındı. Hedef ID: '%s'", certID)
 
-	slots, err := p.GetSlotList(true)
-	if err != nil || len(slots) == 0 {
+	idBytes, err := hex.DecodeString(certID)
+	if err != nil {
+		return "", fmt.Errorf("Geçersiz CertID formatı!")
+	}
+	k, err := s.sertifikaOturumuAc(idBytes)
+	if errors.Is(err, ErrKartYok) {
 		return "", fmt.Errorf("KART TAKILI DEĞİL!")
 	}
-	slot := slots[0]
+	if err != nil {
+		return "", err
+	}
+	defer k.Kapat()
+	p, slot, session := k.p, k.slot, k.session
 
 	// NOT: Burada artık getPinStatus()'un kilitliMi sonucuna bakarak Login()'den ÖNCE
 	// işlemi reddetmiyoruz — o bayrak yanlış pozitif verebiliyor (bkz. getPinStatus yorumu).
 	// pinMesaj yalnızca aşağıdaki hata mesajında bilgi amaçlı gösteriliyor.
 	pinMesaj, _ := getPinStatus(p, slot)
-
-	session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
-	if err != nil {
-		return "", fmt.Errorf("Oturum açılamadı: %v", err)
-	}
-	defer p.CloseSession(session)
 
 	if err := p.Login(session, pkcs11.CKU_USER, pin); err != nil {
 		// Kartın GERÇEKTEN kilitli olduğunun tek güvenilir kanıtı budur — Login()'in kendisinin
@@ -488,11 +504,6 @@ func signHash(p *pkcs11.Ctx, pin, hashBase64, certID string) (string, error) {
 		return "", fmt.Errorf("❌ PIN HATALI! Lütfen kontrol edin. Kart Durumu: %s | Hata: %v", pinMesaj, err)
 	}
 	defer p.Logout(session)
-
-	idBytes, err := hex.DecodeString(certID)
-	if err != nil {
-		return "", fmt.Errorf("Geçersiz CertID formatı!")
-	}
 
 	p.FindObjectsInit(session, []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
@@ -1583,7 +1594,7 @@ func imzaKimlikGorseliOlustur(adSoyad, tcknMaskeli string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
+func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 	log.Printf("[PAdES-1] Döküm: %s için PAdES süreci başladı...", dokumNo)
 
 	// 1. Sunucudan imzasız ham PDF'i indir (JWT jetonuyla korumalı rota)
@@ -1611,18 +1622,21 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 		return fmt.Errorf("PDF dosya içeriği okunamadı veya dosya boş!")
 	}
 
-	// 2. PKCS11 oturumu aç ve sertifikayı bul
-	slots, err := p.GetSlotList(true)
-	if err != nil || len(slots) == 0 {
+	// 2. PKCS11 oturumu aç: seçilen sertifikayı taşıyan kartı açabilen sürücü+slot (bkz.
+	// surucu_secimi.go — artık slots[0] varsayılmıyor).
+	idBytes, err := hex.DecodeString(certID)
+	if err != nil {
+		return fmt.Errorf("Sertifika ID formatı geçersiz!")
+	}
+	k, err := s.sertifikaOturumuAc(idBytes)
+	if errors.Is(err, ErrKartYok) {
 		return fmt.Errorf("Kart okuyucuda takılı değil veya temas etmiyor!")
 	}
-	slot := slots[0]
-
-	session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
 	if err != nil {
-		return fmt.Errorf("Kart oturumu açılamadı: %v", err)
+		return err
 	}
-	defer p.CloseSession(session)
+	defer k.Kapat()
+	p, session := k.p, k.session
 
 	if err := p.Login(session, pkcs11.CKU_USER, pin); err != nil {
 		// Kartın GERÇEKTEN kilitli olduğunun tek güvenilir kanıtı budur — Login()'in kendisinin
@@ -1635,11 +1649,6 @@ func signPAdESAndSync(p *pkcs11.Ctx, pin, certID, dokumNo, token string) error {
 		return fmt.Errorf("❌ PIN Hatalı veya Kart Okunamadı! Lütfen PIN kodunuzu kontrol edip tekrar deneyin. (Detay: %v)", err)
 	}
 	defer p.Logout(session)
-
-	idBytes, err := hex.DecodeString(certID)
-	if err != nil {
-		return fmt.Errorf("Sertifika ID formatı geçersiz!")
-	}
 
 	// Özel Anahtarı Bul
 	p.FindObjectsInit(session, []*pkcs11.Attribute{

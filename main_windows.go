@@ -93,12 +93,15 @@ func tanilamaRaporuKaydet() {
 		surucuDurumu = "Sürücü henüz denenmedi"
 	}
 
+	yukluSurucular, sonSurucu := surucuRaporSatirlari()
 	rapor := fmt.Sprintf(
 		"KolitakipIMZA Tanılama Raporu\n"+
 			"Oluşturulma: %s\n"+
 			"Sürüm: %s\n"+
 			"İşletim Sistemi/Mimari: %s/%s\n"+
 			"Sürücü durum mesajı: %s\n"+
+			"Yüklü sürücüler: %s\n"+
+			"Son kart oturumu: %s\n"+
 			"PC/SC kategorisi: %s\n"+
 			"PC/SC teşhis detayı: %s\n"+
 			"İmzalama engeli: %s\n",
@@ -106,6 +109,8 @@ func tanilamaRaporuKaydet() {
 		APP_VERSION,
 		runtime.GOOS, runtime.GOARCH,
 		surucuDurumu,
+		yukluSurucular,
+		sonSurucu,
 		kategoriMetni,
 		pcscDetay,
 		func() string {

@@ -48,7 +48,7 @@ const AKIS_LIB_PATH = "/usr/lib/libakisp11.so"
 // initDriver, AKİS sürücüsünün C_Initialize(NULL) beklentisini (miekg/pkcs11 kütüphanesi
 // her zaman dolu bir CK_C_INITIALIZE_ARGS struct'ı gönderdiği için) ham bir dlopen/dlsym
 // çağrısıyla karşılar, sonra resmi pkcs11 wrapper'ını aynı yüklü kütüphaneye bağlar.
-func initDriver() (*pkcs11.Ctx, error) {
+func initDriver() (*surucuSeti, error) {
 	// Windows tarafındaki bulunanSurucuAdaylari()'nin dosya-varlığı kontrolüyle aynı ayrımı
 	// burada da yapıyoruz: dosya hiç yoksa ErrSurucuHicKurulmamis (main.go), varsa ama
 	// başlatılamıyorsa genel bir hata — surucuHatasiKullaniciMesaji() ikisini ayırt ediyor.
@@ -64,5 +64,5 @@ func initDriver() (*pkcs11.Ctx, error) {
 		return nil, fmt.Errorf("force_init kod %d (AKİS sürücüsü %s bulunamamış olabilir)", res, AKIS_LIB_PATH)
 	}
 
-	return pkcs11.New(AKIS_LIB_PATH), nil
+	return &surucuSeti{surucular: []yukluSurucu{yeniYukluSurucu(AKIS_LIB_PATH, pkcs11.New(AKIS_LIB_PATH))}}, nil
 }

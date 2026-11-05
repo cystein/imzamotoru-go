@@ -154,34 +154,42 @@ func winHataAciklamasi(res int, winHata uint32) string {
 }
 
 // initDriver, önce (varsa) config dosyasındaki özel sürücü yolunu, sonra bilinen adaylardan
-// makinede fiilen bulunanları sırayla dener; ilk başarılı olan kullanılır. Bir aday
-// başlatılamazsa (dosya bozuk, mimari uyuşmazlığı vb.) sıradaki adaya geçilir — tek bir
-// bozuk/uyumsuz sürücü yüzünden uygulama tamamen çökmez.
-func initDriver() (*pkcs11.Ctx, error) {
+// makinede fiilen bulunanları dener ve başlatılabilen HEPSİNİ yüklü tutar (v1.4.1, §9.14).
+// Hangisinin kullanılacağına her işlemde, kartı gerçekten açabilmesine göre karar verilir
+// (surucu_secimi.go). Bir aday başlatılamazsa (dosya bozuk, mimari uyuşmazlığı vb.) atlanır —
+// tek bir bozuk/uyumsuz sürücü yüzünden uygulama tamamen çökmez.
+func initDriver() (*surucuSeti, error) {
+	var yollar []string
 	if ozelYol, ok := ozelSurucuYoluOku(); ok {
-		if p, err := surucuyuBaslat(ozelYol); err == nil {
-			return p, nil
-		} else {
-			log.Printf("[WORKER] ⚠️ Yapılandırmadaki özel sürücü başlatılamadı, bilinen adaylara devam ediliyor: %v", err)
-		}
+		yollar = append(yollar, ozelYol)
 	}
-
 	adaylar := bulunanSurucuAdaylari()
-	if len(adaylar) == 0 {
+	if len(yollar) == 0 && len(adaylar) == 0 {
 		// %w ile ErrSurucuHicKurulmamis'e sarmalanıyor (main.go) — surucuHatasiKullaniciMesaji()
 		// bu sentinel'i errors.Is() ile yakalayıp eczacıya "sürücü kurulu değil, kurun" diyor;
 		// aşağıdaki "bulundu ama başlatılamadı" durumundan (mimari uyuşmazlığı vb.) ayırt ediliyor.
 		return nil, fmt.Errorf("%w — aranan dosyalar: %v (System32/SysWOW64 içinde bulunamadı)", ErrSurucuHicKurulmamis, driverAdaylari)
 	}
-
-	var sonHata error
-	for _, dllYolu := range adaylar {
-		p, err := surucuyuBaslat(dllYolu)
-		if err == nil {
-			return p, nil
+	for _, aday := range adaylar {
+		if len(yollar) > 0 && strings.EqualFold(aday, yollar[0]) {
+			continue // driver.txt'teki yol zaten başta
 		}
-		log.Printf("[WORKER] ⚠️ %s başlatılamadı, sıradaki adaya geçiliyor: %v", dllYolu, err)
-		sonHata = err
+		yollar = append(yollar, aday)
 	}
-	return nil, fmt.Errorf("bulunan hiçbir sürücü başlatılamadı, son hata: %v", sonHata)
+
+	set := &surucuSeti{}
+	var sonHata error
+	for _, dllYolu := range yollar {
+		p, err := surucuyuBaslat(dllYolu)
+		if err != nil {
+			log.Printf("[WORKER] ⚠️ %s başlatılamadı, sıradaki adaya geçiliyor: %v", dllYolu, err)
+			sonHata = err
+			continue
+		}
+		set.surucular = append(set.surucular, yeniYukluSurucu(dllYolu, p))
+	}
+	if len(set.surucular) == 0 {
+		return nil, fmt.Errorf("bulunan hiçbir sürücü başlatılamadı, son hata: %v", sonHata)
+	}
+	return set, nil
 }
