@@ -35,6 +35,16 @@ type yukluSurucu struct {
 // (PKCS#11 çağrıları OS thread'e kilitli), bu yüzden kendi içinde kilit gerekmiyor.
 type surucuSeti struct {
 	surucular []yukluSurucu
+	denenmis  map[string]bool // yeniSuruculeriYukle'nin daha önce denediği yollar (küçük harf)
+}
+
+// yollar, yüklü sürücülerin tam yolları (sürücü önerisi için).
+func (s *surucuSeti) yollar() []string {
+	var y []string
+	for _, d := range s.surucular {
+		y = append(y, d.Yol)
+	}
+	return y
 }
 
 // kartOturumu, açık bir PKCS#11 oturumudur; Kapat() ile kapatılmalıdır.
@@ -68,8 +78,9 @@ func yeniYukluSurucu(yol string, p *pkcs11.Ctx) yukluSurucu {
 // kilitli bir değişkende tutuluyor — rapor PKCS#11'e hiç dokunmuyor.
 var (
 	surucuOzetiMu       sync.Mutex
-	yukluSurucuOzeti    string // "yol (bilgi)" satırları
-	sonKullanilanSurucu string // en son oturum açılabilen sürücü + kart
+	yukluSurucuOzeti    string   // "yol (bilgi)" satırları
+	yukluSurucuYollari  []string // tanılama raporundaki sürücü önerisi için
+	sonKullanilanSurucu string   // en son oturum açılabilen sürücü + kart
 )
 
 func surucuOzetiniKaydet(s *surucuSeti) {
@@ -79,6 +90,7 @@ func surucuOzetiniKaydet(s *surucuSeti) {
 	}
 	surucuOzetiMu.Lock()
 	yukluSurucuOzeti = strings.Join(satirlar, " | ")
+	yukluSurucuYollari = s.yollar()
 	surucuOzetiMu.Unlock()
 }
 
@@ -121,7 +133,7 @@ func oturumHatasiMesaji(hatalar []string) error {
 			break
 		}
 	}
-	return fmt.Errorf("Kart oturumu açılamadı: %s.%s", strings.Join(hatalar, "; "), ipucu)
+	return &kartHatasi{mesaj: fmt.Sprintf("Kart oturumu açılamadı: %s.%s", strings.Join(hatalar, "; "), ipucu), neden: ErrKartAcilamadi}
 }
 
 // kartOturumlari, kartı açılabilen her (sürücü, slot) için fn'i çağırır. fn true dönerse oturum
@@ -186,3 +198,20 @@ func (s *surucuSeti) sertifikaOturumuAc(certID []byte) (*kartOturumu, error) {
 
 // sertifikaParmakIzi, aynı kartı iki ayrı sürücü görürse listede çift göstermemek için.
 func sertifikaParmakIzi(der []byte) [32]byte { return sha256.Sum256(der) }
+
+// yukluYollarKopyasi, tanılama raporu (tepsi goroutine'i) için yüklü sürücü yollarının kopyası.
+func yukluYollarKopyasi() []string {
+	surucuOzetiMu.Lock()
+	defer surucuOzetiMu.Unlock()
+	return append([]string(nil), yukluSurucuYollari...)
+}
+
+// bilgi, yüklü bir sürücünün C_GetInfo özetini döndürür.
+func (s *surucuSeti) bilgi(yol string) string {
+	for _, d := range s.surucular {
+		if d.Yol == yol {
+			return d.Bilgi
+		}
+	}
+	return ""
+}

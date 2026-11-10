@@ -66,3 +66,9 @@ func initDriver() (*surucuSeti, error) {
 
 	return &surucuSeti{surucular: []yukluSurucu{yeniYukluSurucu(AKIS_LIB_PATH, pkcs11.New(AKIS_LIB_PATH))}}, nil
 }
+
+// surucuDosyasiDurumu: Linux'ta 32/64 bit ayrımı yapılmıyor.
+func surucuDosyasiDurumu(ad string) (var64, var32 bool) { return false, false }
+
+// yeniSuruculeriYukle: Linux'ta tek sabit sürücü var, sonradan ekleme yok.
+func (s *surucuSeti) yeniSuruculeriYukle() {}

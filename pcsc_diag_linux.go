@@ -19,3 +19,8 @@ const (
 func pcscTeshisi() (PcscKategori, string) {
 	return PcscBilinmiyor, "PC/SC teşhisi bu platformda uygulanmadı"
 }
+
+func pcscTara() PcscSonuc {
+	k, d := pcscTeshisi()
+	return PcscSonuc{Kategori: k, Detay: d}
+}

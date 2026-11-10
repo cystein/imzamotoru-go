@@ -72,7 +72,12 @@ func logDosyasiniAyarla() {
 // projede henüz hiç kullanılmayan bir clipboard kütüphanesi) gerektirirdi, dosya+Not Defteri
 // hem bağımlılıksız hem de eczacının ekran görüntüsü/dosya olarak paylaşmasına daha uygun.
 func tanilamaRaporuKaydet() {
-	kategori, pcscDetay := pcscTeshisi()
+	tarama := pcscTara()
+	kategori, pcscDetay := tarama.Kategori, tarama.Detay
+	oneriSatiri := "yok"
+	if oneri := surucuOnerisiBelirle(tarama, yukluYollarKopyasi()); oneri != nil {
+		oneriSatiri = oneri.Kod + " — " + oneri.Mesaj
+	}
 	kategoriMetni := map[PcscKategori]string{
 		PcscBilinmiyor:              "bilinmiyor",
 		PcscKaynakYoneticisiKapali:  "Windows Akıllı Kart Hizmeti çalışmıyor",
@@ -102,6 +107,7 @@ func tanilamaRaporuKaydet() {
 			"Sürücü durum mesajı: %s\n"+
 			"Yüklü sürücüler: %s\n"+
 			"Son kart oturumu: %s\n"+
+			"Kart/sürücü önerisi: %s\n"+
 			"PC/SC kategorisi: %s\n"+
 			"PC/SC teşhis detayı: %s\n"+
 			"İmzalama engeli: %s\n",
@@ -111,6 +117,7 @@ func tanilamaRaporuKaydet() {
 		surucuDurumu,
 		yukluSurucular,
 		sonSurucu,
+		oneriSatiri,
 		kategoriMetni,
 		pcscDetay,
 		func() string {

@@ -193,3 +193,46 @@ func initDriver() (*surucuSeti, error) {
 	}
 	return set, nil
 }
+
+// surucuDosyasiDurumu, bir sürücü DLL'inin 64 bitlik (System32) ve 32 bitlik (SysWOW64)
+// konumlarda bulunup bulunmadığını söyler — "yalnız 32 bit kurulu" teşhisi için (v1.5.0).
+func surucuDosyasiDurumu(ad string) (var64, var32 bool) {
+	klasorler := driverAdayKlasorleri() // [System32, SysWOW64]
+	if _, err := os.Stat(filepath.Join(klasorler[0], ad)); err == nil {
+		var64 = true
+	}
+	if _, err := os.Stat(filepath.Join(klasorler[1], ad)); err == nil {
+		var32 = true
+	}
+	return
+}
+
+// yeniSuruculeriYukle, motor çalışırken sonradan kurulan bir sürücüyü (ör. eczacı rehberdeki
+// AKİS sürücüsünü kurdu) yeniden başlatma beklemeden sete ekler (v1.5.0). Daha önce denenip
+// başlatılamayan yollar tekrar denenmez. Yalnız cardWorker iş parçacığından çağrılır.
+func (s *surucuSeti) yeniSuruculeriYukle() {
+	if s.denenmis == nil {
+		s.denenmis = map[string]bool{}
+		for _, d := range s.surucular {
+			s.denenmis[strings.ToLower(d.Yol)] = true
+		}
+	}
+	eklendi := false
+	for _, yol := range bulunanSurucuAdaylari() {
+		anahtar := strings.ToLower(yol)
+		if s.denenmis[anahtar] {
+			continue
+		}
+		s.denenmis[anahtar] = true
+		p, err := surucuyuBaslat(yol)
+		if err != nil {
+			log.Printf("[WORKER] ⚠️ Sonradan bulunan sürücü başlatılamadı: %v", err)
+			continue
+		}
+		s.surucular = append(s.surucular, yeniYukluSurucu(yol, p))
+		eklendi = true
+	}
+	if eklendi {
+		surucuOzetiniKaydet(s)
+	}
+}

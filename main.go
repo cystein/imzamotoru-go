@@ -99,6 +99,10 @@ type ResponseMessage struct {
 	Status string `json:"status"`
 	Data   any    `json:"data,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Oneri (v1.5.0): kart görünmüyor/açılamıyor ya da sürücü yoksa, karta göre hangi sürücünün
+	// gerektiğini söyleyen yapılandırılmış öneri. Sayfa bu koda göre indirme bağlantılı rehber
+	// gösterir; eski sayfalar alanı yok sayar ve Error metnini gösterir.
+	Oneri *SurucuOnerisi `json:"oneri,omitempty"`
 }
 
 type CardJob struct {
@@ -210,18 +214,40 @@ func cardWorker() {
 		select {
 		case job := <-jobQueue:
 			if p == nil {
+				// v1.5.0: eczacı rehberdeki sürücüyü az önce kurmuş olabilir — 5 dakikalık
+				// periyodik denemeyi beklemeden, istek geldiği anda bir kez daha dene.
+				p = surucuyuDeneYeninenBildir()
+			}
+			if p == nil {
 				msg := sonSurucuTeshisMesaji
 				if msg == "" {
 					msg = "Akıllı kart sürücüsü bulunamadı/başlatılamadı."
 				}
-				job.Reply <- ResponseMessage{Status: "error", Error: msg + " (Uygulama arka planda periyodik olarak yeniden deniyor.)"}
+				yanit := ResponseMessage{Status: "error", Error: msg + " (Uygulama arka planda periyodik olarak yeniden deniyor.)"}
+				if oneri := surucuOnerisiBelirle(pcscTara(), nil); oneri != nil {
+					yanit.Error, yanit.Oneri = oneri.Mesaj, oneri
+				}
+				job.Reply <- yanit
 				continue
+			}
+			// Motor açıkken sonradan kurulan bir sürücü varsa sete ekle (yeniden başlatma gerekmesin).
+			p.yeniSuruculeriYukle()
+			hataYaniti := func(err error) ResponseMessage {
+				yanit := ResponseMessage{Status: "error", Error: err.Error()}
+				// Kart görünmüyor/açılamıyorsa PC/SC'ye bak: takılı kartın sürücüsü eksik olabilir
+				// (ör. makinede yalnız SafeNet var, takılan kart AKİS).
+				if kartErisimHatasiMi(err) {
+					if oneri := surucuOnerisiBelirle(pcscTara(), p.yollar()); oneri != nil {
+						yanit.Error, yanit.Oneri = oneri.Mesaj, oneri
+					}
+				}
+				return yanit
 			}
 			switch job.Action {
 			case "list_certs":
 				data, err := listCertificates(p)
 				if err != nil {
-					job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
+					job.Reply <- hataYaniti(err)
 				} else {
 					job.Reply <- ResponseMessage{Status: "success", Data: data}
 				}
@@ -236,7 +262,7 @@ func cardWorker() {
 				}
 				sig, err := signHash(p, job.Pin, job.Hash, job.CertID)
 				if err != nil {
-					job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
+					job.Reply <- hataYaniti(err)
 				} else {
 					job.Reply <- ResponseMessage{Status: "success", Data: sig}
 				}
@@ -255,7 +281,7 @@ func cardWorker() {
 				}
 				err := signPAdESAndSync(p, job.Pin, job.CertID, job.DokumNo, job.Token)
 				if err != nil {
-					job.Reply <- ResponseMessage{Status: "error", Error: err.Error()}
+					job.Reply <- hataYaniti(err)
 				} else {
 					job.Reply <- ResponseMessage{Status: "success", Data: "PAdES İmza PDF'e gömüldü ve sunucuya iletildi!"}
 				}
@@ -333,9 +359,16 @@ func surucuyuDeneYeninenBildir() *surucuSeti {
 		// ve kart görünüyor mu diye ayrıca bakıyoruz — bu teşhis, "okuyucu hiç yok" ile "Windows
 		// servisi kapalı" ile "kart var ama bizim aday listemizde olmayan bir sürücü lazım"
 		// ayrımını bizim tarafımızdan (uzaktan, eczaneye gitmeden) yapabilmemizi sağlıyor.
-		kategori, pcscDetay := pcscTeshisi()
+		tarama := pcscTara()
+		kategori, pcscDetay := tarama.Kategori, tarama.Detay
 		log.Printf("⚠️ [WORKER] SÜRÜCÜ BAŞLATILAMADI: %v | PC/SC: %s", err, pcscDetay)
 		sonSurucuTeshisMesaji = surucuHatasiKullaniciMesaji(err, kategori)
+		// v1.5.0: kart tanınabiliyorsa tepside de karta özel öneri gösterilir (hangi sürücü).
+		oneriKodu := ""
+		if oneri := surucuOnerisiBelirle(tarama, nil); oneri != nil {
+			sonSurucuTeshisMesaji = oneri.Mesaj
+			oneriKodu = " | öneri: " + oneri.Kod
+		}
 
 		// Kaynak Yöneticisi kapalıysa başlatmayı dene — çoğu zaman yönetici izni ister, garantisi
 		// yok ama denemenin bedeli yok. Başarılı olursa sürücüyü HEMEN bir kez daha dene, 5 dakika
@@ -356,7 +389,7 @@ func surucuyuDeneYeninenBildir() *surucuSeti {
 			}
 		}
 
-		tamMesaj := fmt.Sprintf("Akıllı kart sürücüsü bulunamadı/başlatılamadı: %v | PC/SC teşhisi: %s", err, pcscDetay)
+		tamMesaj := fmt.Sprintf("Akıllı kart sürücüsü bulunamadı/başlatılamadı: %v | PC/SC teşhisi: %s%s", err, pcscDetay, oneriKodu)
 		if tamMesaj == sonBildirilenTeshis {
 			return nil // aynı teşhis daha önce sunucuya bildirildi, tekrar POST atma
 		}
@@ -461,7 +494,7 @@ func listCertificates(s *surucuSeti) ([]map[string]any, error) {
 	})
 	if len(list) == 0 {
 		if errors.Is(err, ErrKartYok) {
-			return nil, fmt.Errorf("KART OKUYUCU BOŞ VEYA KART TAKILI DEĞİL!")
+			return nil, &kartHatasi{mesaj: "KART OKUYUCU BOŞ VEYA KART TAKILI DEĞİL!", neden: ErrKartYok}
 		}
 		if err != nil {
 			return nil, err
@@ -480,7 +513,7 @@ func signHash(s *surucuSeti, pin, hashBase64, certID string) (string, error) {
 	}
 	k, err := s.sertifikaOturumuAc(idBytes)
 	if errors.Is(err, ErrKartYok) {
-		return "", fmt.Errorf("KART TAKILI DEĞİL!")
+		return "", &kartHatasi{mesaj: "KART TAKILI DEĞİL!", neden: ErrKartYok}
 	}
 	if err != nil {
 		return "", err
@@ -1628,9 +1661,13 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 	if err != nil {
 		return fmt.Errorf("Sertifika ID formatı geçersiz!")
 	}
+	// v1.5.0: kartın ATR'si PKCS#11 oturumu açılmadan önce PC/SC'den okunur (oturum açıkken
+	// bazı ara katmanlar kartı paylaşıma kapatabiliyor). Başarılı imzada sunucuya "bu ATR'li kart
+	// bu sürücüyle çalıştı" bilgisi gider; ATR → sürücü tablosu gerçek veriyle tamamlanır.
+	kartTarama := pcscTara()
 	k, err := s.sertifikaOturumuAc(idBytes)
 	if errors.Is(err, ErrKartYok) {
-		return fmt.Errorf("Kart okuyucuda takılı değil veya temas etmiyor!")
+		return &kartHatasi{mesaj: "Kart okuyucuda takılı değil veya temas etmiyor!", neden: ErrKartYok}
 	}
 	if err != nil {
 		return err
@@ -1789,6 +1826,8 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 		// Hangi imza motoru sürümünün imzaladığı — geriye dönük hata ayıklama/istatistik için
 		// (ör. "bu 5 evrak da 1.2.1 ile imzalanmış, o sürümde bilinen X hatası vardı" diyebilmek).
 		"imza_motoru_surumu": APP_VERSION,
+		// v1.5.0: kart/sürücü eşleşmesi (sunucu yalnız kayda yazar, imzayı etkilemez).
+		"kart_bilgisi": kartBilgisiJSON(kartTarama, k.surucu, s.bilgi(k.surucu), k),
 	}
 	jsonPayload, _ := json.Marshal(payload)
 
@@ -1804,4 +1843,20 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 
 	log.Println("[PAdES-5] Evrak başarıyla mühürlendi ve arşive kaldırıldı.")
 	return nil
+}
+
+// kartBilgisiJSON, başarılı imzada sunucuya gönderilen kart/sürücü eşleşmesini üretir (v1.5.0).
+// Kişisel veri içermez: okuyucu adları, ATR'ler, sürücü yolu ve token etiketi/modeli.
+func kartBilgisiJSON(t PcscSonuc, surucuYolu, surucuBilgisi string, k *kartOturumu) string {
+	bilgi := map[string]any{
+		"surucu":         surucuYolu,
+		"surucu_bilgisi": surucuBilgisi,
+		"okuyucular":     t.Okuyucular,
+	}
+	if info, err := k.p.GetTokenInfo(k.slot); err == nil {
+		bilgi["token_uretici"] = strings.TrimSpace(info.ManufacturerID)
+		bilgi["token_model"] = strings.TrimSpace(info.Model)
+	}
+	b, _ := json.Marshal(bilgi)
+	return string(b)
 }
