@@ -13,7 +13,7 @@
 ; duymadan çalışır. Chrome/Slack/Discord gibi pek çok uygulama tam bu sebeple bu deseni kullanır.
 
 #define MyAppName "KolitakipIMZA"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "Kolitakip"
 #define MyAppURL "https://eimza.sgkkolitakip.web.tr"
 #define MyAppExeName "KolitakipIMZA.exe"
