@@ -105,10 +105,12 @@ func guncellemeyiDenetle() {
 	// (bir kereye mahsus değil): sunucudaki latest.json bu istemcinin sürümünü artık desteklemez
 	// diyorsa, imzalama hemen durdurulur. bkz. latestVersionInfo.MinSupportedVersion.
 	if info.MinSupportedVersion != "" && surumKarsilastir(APP_VERSION, info.MinSupportedVersion) < 0 {
-		mesaj := fmt.Sprintf("Bu istemci sürümü (v%s) artık güvenli kabul edilmiyor (asgari desteklenen: v%s) — güvenlik nedeniyle imzalama durduruldu. Program kendini güncelleyene kadar bekleyin ya da en güncel installer'ı yeniden kurun.", APP_VERSION, info.MinSupportedVersion)
+		// Eczacıya sade mesaj; sürüm numaraları yalnız bize giden bildirimde ve logda.
+		mesaj := "KolitakipIMZA programınızın sürümü eski olduğu için imza atılamıyor. Ekranın sağ altındaki KolitakipIMZA simgesine sağ tıklayıp \"Şimdi Güncellemeyi Kontrol Et\"i seçin (bu seçenek yoksa programı imza sayfasındaki kurulum bağlantısından yeniden kurun); güncelleme bitince tekrar deneyin."
 		if imzalamaEngelMesaji() != mesaj {
-			log.Println("⛔ [UPDATE] KILL SWITCH devrede:", mesaj)
-			bildir(SeviyeKritik, "SURUM_DESTEKLENMIYOR", mesaj)
+			teknik := fmt.Sprintf("Bu istemci sürümü (v%s) artık güvenli kabul edilmiyor (asgari desteklenen: v%s) — imzalama durduruldu.", APP_VERSION, info.MinSupportedVersion)
+			log.Println("⛔ [UPDATE] KILL SWITCH devrede:", teknik)
+			bildir(SeviyeKritik, "SURUM_DESTEKLENMIYOR", teknik)
 		}
 		imzalamaEngeli.Store(mesaj)
 	} else {

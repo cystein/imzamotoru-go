@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
+
+	"github.com/miekg/pkcs11"
 )
 
 // ============================================================================
@@ -179,13 +183,60 @@ var ErrKartAcilamadi = errors.New("kart oturumu açılamadı")
 
 // kartHatasi, kullanıcıya gösterilecek mesajı korurken altta yatan nedeni (ErrKartYok /
 // ErrKartAcilamadi) errors.Is ile ayırt edilebilir tutar — cardWorker buna bakıp öneri üretir.
+// v1.5.2: detay, eczacıya gösterilmeyen teknik ayrıntıdır (pkcs11 kodu, DLL yolu, HTTP durumu).
+// Sayfa onu katlanır "Teknik ayrıntı" kutusunda gösterir; mesaj sade Türkçe kalır.
 type kartHatasi struct {
 	mesaj string
+	detay string
 	neden error
 }
 
 func (e *kartHatasi) Error() string { return e.mesaj }
 func (e *kartHatasi) Unwrap() error { return e.neden }
+
+// sadeHata, eczacıya sade bir mesaj, destek ekibine teknik ayrıntı taşıyan hata üretir (v1.5.2).
+// Teknik ayrıntı ayrıca yerel loga yazılır.
+func sadeHata(mesaj string, detay string, args ...any) error {
+	d := fmt.Sprintf(detay, args...)
+	log.Printf("[HATA] %s | teknik: %s", mesaj, d)
+	return &kartHatasi{mesaj: mesaj, detay: d}
+}
+
+// hataDetayi, hatanın teknik ayrıntısını döndürür (yoksa boş).
+func hataDetayi(err error) string {
+	var k *kartHatasi
+	if errors.As(err, &k) {
+		return k.detay
+	}
+	return ""
+}
+
+// Sık kullanılan sade mesajlar.
+const (
+	mesajSayfayiYenile       = "Belge imzaya hazırlanırken bir sorun oluştu. Sayfayı yenileyip tekrar deneyin; sorun sürerse bizimle iletişime geçin."
+	mesajKartTakiliDegil     = "Kartınız takılı görünmüyor. Kartı okuyucuya takıp tekrar deneyin."
+	mesajKartImzalamadi      = "Kartınız imzayı tamamlayamadı. Kartı çıkarıp yeniden takın ve tekrar deneyin; sorun sürerse kart sürücünüzü yeniden kurmanız gerekebilir."
+	mesajAnahtarYok          = "Seçtiğiniz sertifikanın imza anahtarı kartta bulunamadı. Doğru kartı taktığınızdan ve listeden doğru sertifikayı seçtiğinizden emin olun."
+	mesajSertifikaOkunamadi  = "Kartınızdaki sertifika okunamadı. Kartı çıkarıp yeniden takın ve tekrar deneyin."
+	mesajPinKilitli          = "Kartınızın PIN kodu, çok sayıda hatalı deneme nedeniyle kilitlenmiş. Kilidi açmak için PUK kodunuzla sertifika sağlayıcınızın programını kullanmanız gerekiyor."
+	mesajSunucuyaUlasilamadi = "Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin."
+)
+
+// pinHatasi, Login hatasını sade mesaja çevirir: yalnız gerçekten "PIN yanlış" kodlarında
+// "PIN hatalı" denir; diğer Login hataları (kart teması, cihaz hatası) ayrı anlatılır.
+func pinHatasi(err error, pinDurumu string) error {
+	if pErr, ok := err.(pkcs11.Error); ok && (pErr == pkcs11.CKR_PIN_INCORRECT || pErr == pkcs11.CKR_PIN_LEN_RANGE) {
+		mesaj := "PIN kodu hatalı. Lütfen kontrol edip tekrar deneyin. Art arda yanlış girilirse kart kilitlenir."
+		if strings.Contains(pinDurumu, "SON DENEME") {
+			mesaj = "PIN kodu hatalı. Dikkat: son deneme hakkınız kaldı, bir yanlış giriş daha kartı kilitler."
+		} else if strings.Contains(pinDurumu, "Az deneme") {
+			mesaj = "PIN kodu hatalı. Dikkat: az deneme hakkınız kaldı."
+		}
+		return sadeHata(mesaj, "Login: %v (kart durumu: %s)", err, pinDurumu)
+	}
+	return sadeHata("PIN kodu hatalı ya da kart okunamadı. PIN kodunuzu kontrol edip tekrar deneyin; PIN doğruysa kartı çıkarıp yeniden takın.",
+		"Login: %v (kart durumu: %s)", err, pinDurumu)
+}
 
 // kartErisimHatasiMi: hata, sürücü önerisi üretmeye değer bir "kart görünmüyor/açılamıyor" mu?
 func kartErisimHatasiMi(err error) bool {

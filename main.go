@@ -103,6 +103,9 @@ type ResponseMessage struct {
 	// gerektiğini söyleyen yapılandırılmış öneri. Sayfa bu koda göre indirme bağlantılı rehber
 	// gösterir; eski sayfalar alanı yok sayar ve Error metnini gösterir.
 	Oneri *SurucuOnerisi `json:"oneri,omitempty"`
+	// Detay (v1.5.2): Error eczacıya sade Türkçe mesajdır; teknik ayrıntı (pkcs11 kodu, HTTP
+	// durumu, DLL yolu) burada gelir. Sayfa onu katlanır "Teknik ayrıntı" kutusunda gösterir.
+	Detay string `json:"detay,omitempty"`
 }
 
 type CardJob struct {
@@ -233,7 +236,7 @@ func cardWorker() {
 			// Motor açıkken sonradan kurulan bir sürücü varsa sete ekle (yeniden başlatma gerekmesin).
 			p.yeniSuruculeriYukle()
 			hataYaniti := func(err error) ResponseMessage {
-				yanit := ResponseMessage{Status: "error", Error: err.Error()}
+				yanit := ResponseMessage{Status: "error", Error: err.Error(), Detay: hataDetayi(err)}
 				// Kart görünmüyor/açılamıyorsa PC/SC'ye bak: takılı kartın sürücüsü eksik olabilir
 				// (ör. makinede yalnız SafeNet var, takılan kart AKİS).
 				if kartErisimHatasiMi(err) {
@@ -257,7 +260,7 @@ func cardWorker() {
 					continue
 				}
 				if job.CertID == "" {
-					job.Reply <- ResponseMessage{Status: "error", Error: "Sertifika ID boş olamaz!"}
+					job.Reply <- ResponseMessage{Status: "error", Error: "Önce kartınızı okutup sertifikanızı seçin.", Detay: "cert_id boş"}
 					continue
 				}
 				sig, err := signHash(p, job.Pin, job.Hash, job.CertID)
@@ -272,11 +275,11 @@ func cardWorker() {
 					continue
 				}
 				if job.CertID == "" || job.DokumNo == "" {
-					job.Reply <- ResponseMessage{Status: "error", Error: "Sertifika ID veya Döküm No boş olamaz!"}
+					job.Reply <- ResponseMessage{Status: "error", Error: mesajSayfayiYenile, Detay: "cert_id veya dokum_no boş"}
 					continue
 				}
 				if job.Token == "" {
-					job.Reply <- ResponseMessage{Status: "error", Error: "Yükleme jetonu (upload_token) eksik! Lütfen sayfayı yenileyip tekrar deneyin."}
+					job.Reply <- ResponseMessage{Status: "error", Error: "İmza oturumu bilgisi eksik. Sayfayı yenileyip tekrar deneyin.", Detay: "upload_token boş"}
 					continue
 				}
 				err := signPAdESAndSync(p, job.Pin, job.CertID, job.DokumNo, job.Token)
@@ -320,9 +323,9 @@ var surucuHazir atomic.Bool
 func surucuHatasiKullaniciMesaji(err error, kategori PcscKategori) string {
 	switch kategori {
 	case PcscKaynakYoneticisiKapali:
-		return "Windows'un Akıllı Kart Hizmeti şu an çalışmıyor — bu bir sürücü sorunu DEĞİL. " +
-			"Kart okuyucunuzun bilgisayara takılı olduğundan emin olun, ardından bilgisayarınızı " +
-			"yeniden başlatın. Sorun sürerse BT desteğinize 'Smart Card servisi kapalı' olduğunu iletin."
+		return "Windows'un akıllı kart hizmeti şu an çalışmıyor. Kart okuyucunuzun bilgisayara takılı " +
+			"olduğundan emin olun, ardından bilgisayarınızı yeniden başlatın. Sorun sürerse bilgisayarınıza " +
+			"bakan kişiye 'Akıllı Kart (Smart Card) hizmeti kapalı' olduğunu iletin."
 	case PcscOkuyucuYok:
 		return "Bilgisayarınızda bir akıllı kart okuyucu bulunamadı. Kart okuyucunuzun USB'ye " +
 			"takılı olduğundan emin olun."
@@ -331,12 +334,12 @@ func surucuHatasiKullaniciMesaji(err error, kategori PcscKategori) string {
 	// PcscOkuyucuVarSurucuGerekli ya da PcscBilinmiyor (Linux/teşhis başarısız) — burada gerçekten
 	// bir sürücü eksikliği söz konusu, initDriver()'ın kendi hatasına göre spesifikleştiriyoruz.
 	if errors.Is(err, ErrSurucuHicKurulmamis) {
-		return "Bilgisayarınızda akıllı kart okuyucu sürücüsü kurulu değil. Lütfen kartınızın (AKİS, TÜRKTRUST vb.) resmi sürücüsünü kurup uygulamayı yeniden başlatın."
+		return "Bilgisayarınızda kart sürücüsü kurulu değil. Sertifikanızı aldığınız firmanın sürücüsünü kurup KolitakipIMZA'yı yeniden başlatın."
 	}
 	if strings.Contains(err.Error(), "ERROR_BAD_EXE_FORMAT") {
-		return "Bilgisayarınızda bulunan kart sürücüsü mimarinizle uyumsuz (32-bit/64-bit karışıklığı). Lütfen sürücüyü kaldırıp kart üreticinizin sitesinden doğru (64-bit) sürümü yeniden kurun."
+		return "Bilgisayarınızdaki kart sürücüsü bu Windows ile uyumlu değil. Sürücüyü kaldırıp kart üreticinizin sitesinden 64 bit sürümünü kurun, sonra KolitakipIMZA'yı yeniden başlatın."
 	}
-	return "Kart okuyucu sürücünüz bulundu ama başlatılamadı. Kart okuyucunuzu çıkarıp tekrar takmayı veya bilgisayarı yeniden başlatmayı deneyin; sorun sürerse destek ile iletişime geçin."
+	return "Kart sürücünüz bulundu ama çalıştırılamadı. Kart okuyucunuzu çıkarıp tekrar takın ya da bilgisayarı yeniden başlatın; sorun sürerse bizimle iletişime geçin."
 }
 
 // sonBildirilenTeshis, en son SUNUCUYA bildirilen (log değil, bildir() ile POST edilen) tam
@@ -494,7 +497,7 @@ func listCertificates(s *surucuSeti) ([]map[string]any, error) {
 	})
 	if len(list) == 0 {
 		if errors.Is(err, ErrKartYok) {
-			return nil, &kartHatasi{mesaj: "KART OKUYUCU BOŞ VEYA KART TAKILI DEĞİL!", neden: ErrKartYok}
+			return nil, &kartHatasi{mesaj: mesajKartTakiliDegil, neden: ErrKartYok}
 		}
 		if err != nil {
 			return nil, err
@@ -509,11 +512,11 @@ func signHash(s *surucuSeti, pin, hashBase64, certID string) (string, error) {
 
 	idBytes, err := hex.DecodeString(certID)
 	if err != nil {
-		return "", fmt.Errorf("Geçersiz CertID formatı!")
+		return "", sadeHata(mesajSayfayiYenile, "CertID hex değil: %q", certID)
 	}
 	k, err := s.sertifikaOturumuAc(idBytes)
 	if errors.Is(err, ErrKartYok) {
-		return "", &kartHatasi{mesaj: "KART TAKILI DEĞİL!", neden: ErrKartYok}
+		return "", &kartHatasi{mesaj: mesajKartTakiliDegil, neden: ErrKartYok}
 	}
 	if err != nil {
 		return "", err
@@ -531,10 +534,10 @@ func signHash(s *surucuSeti, pin, hashBase64, certID string) (string, error) {
 		// döndürdüğü CKR_PIN_LOCKED. Sadece bu durumda Kritik rapor gönderiyoruz.
 		if pErr, ok := err.(pkcs11.Error); ok && pErr == pkcs11.CKR_PIN_LOCKED {
 			bildir(SeviyeKritik, "PIN_KILITLI", fmt.Sprintf("Kart PIN'i GERÇEKTEN kilitli (Login CKR_PIN_LOCKED) — sertifika ID: %s", certID))
-			return "", fmt.Errorf("❌ KART PIN KODU KİLİTLİ! PUK KODU İLE AÇMANIZ GEREKMEKTEDİR.")
+			return "", sadeHata(mesajPinKilitli, "Login: CKR_PIN_LOCKED")
 		}
 		log.Println("❌ [UYARI] PIN DOĞRULAMA BAŞARISIZ OLDU!")
-		return "", fmt.Errorf("❌ PIN HATALI! Lütfen kontrol edin. Kart Durumu: %s | Hata: %v", pinMesaj, err)
+		return "", pinHatasi(err, pinMesaj)
 	}
 	defer p.Logout(session)
 
@@ -559,14 +562,14 @@ func signHash(s *surucuSeti, pin, hashBase64, certID string) (string, error) {
 		p.FindObjectsFinal(session)
 
 		if len(keys) == 0 {
-			return "", fmt.Errorf("Bu ID için kartta ne ECDSA ne de RSA özel anahtarı bulunamadı!")
+			return "", sadeHata(mesajAnahtarYok, "CKA_ID %s için ECDSA/RSA özel anahtar yok", certID)
 		}
 		mech = pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS, nil)
 	}
 
 	h, err := base64.StdEncoding.DecodeString(hashBase64)
 	if err != nil {
-		return "", fmt.Errorf("Hash Base64 decode edilemedi!")
+		return "", sadeHata(mesajSayfayiYenile, "hash base64 çözülemedi: %v", err)
 	}
 
 	dataToSign := h
@@ -577,13 +580,13 @@ func signHash(s *surucuSeti, pin, hashBase64, certID string) (string, error) {
 
 	err = p.SignInit(session, []*pkcs11.Mechanism{mech}, keys[0])
 	if err != nil {
-		return "", fmt.Errorf("SignInit hatası: %v", err)
+		return "", sadeHata(mesajKartImzalamadi, "SignInit: %v", err)
 	}
 
 	start := time.Now()
 	sig, err := p.Sign(session, dataToSign)
 	if err != nil {
-		return "", fmt.Errorf("İMZA ATILAMADI (Donanım İşlemi Reddeti): %v", err)
+		return "", sadeHata(mesajKartImzalamadi, "Sign: %v", err)
 	}
 
 	log.Printf("[SIGN-3] İmza başarıyla üretildi (işlem süresi: %v)", time.Since(start))
@@ -599,6 +602,9 @@ type AkisSigner struct {
 	privKey pkcs11.ObjectHandle
 	pubKey  crypto.PublicKey
 	mech    *pkcs11.Mechanism
+	// donanimHatasi: kart SignInit/Sign'ı reddettiyse (v1.5.2) — PDF kütüphanesinin döndürdüğü
+	// hatadan "kart imzalamadı" ile "belge hazırlanamadı" ayrımını yapabilmek için.
+	donanimHatasi error
 }
 
 func (a *AkisSigner) Public() crypto.PublicKey {
@@ -626,7 +632,8 @@ func (a *AkisSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts)
 	log.Println("[AKIS-SIGNER] PAdES kütüphanesi çipe imza emri verdi, donanım hesaplıyor...")
 	err := a.p.SignInit(a.session, []*pkcs11.Mechanism{a.mech}, a.privKey)
 	if err != nil {
-		return nil, fmt.Errorf("SignInit hatası: %v", err)
+		a.donanimHatasi = fmt.Errorf("SignInit: %v", err)
+		return nil, a.donanimHatasi
 	}
 
 	dataToSign := digest
@@ -640,7 +647,8 @@ func (a *AkisSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts)
 
 	sig, err := a.p.Sign(a.session, dataToSign)
 	if err != nil {
-		return nil, fmt.Errorf("Donanım imza üretimi başarısız: %v", err)
+		a.donanimHatasi = fmt.Errorf("Sign: %v", err)
+		return nil, a.donanimHatasi
 	}
 
 	if a.mech.Mechanism == pkcs11.CKM_ECDSA {
@@ -686,10 +694,13 @@ func sunucuHataMesaji(resp *http.Response, baglamMesaji string) error {
 	var sunucuHata struct {
 		Message string `json:"message"`
 	}
+	// v1.5.2: sunucunun kendi gerekçesi zaten eczacıya yazılmış sade bir cümle — olduğu gibi
+	// gösterilir. JSON olmayan yanıt (ör. proxy/WAF 403 sayfası) eczacıya teknik ayrıntısız anlatılır.
 	if json.Unmarshal(body, &sunucuHata) == nil && sunucuHata.Message != "" {
-		return fmt.Errorf("%s: %s", baglamMesaji, sunucuHata.Message)
+		return sadeHata(sunucuHata.Message, "%s (HTTP %d)", baglamMesaji, resp.StatusCode)
 	}
-	return fmt.Errorf("%s (Sunucu beklenmeyen bir yanıt döndü, HTTP %d)", baglamMesaji, resp.StatusCode)
+	return sadeHata("Sunucu imzanızı şu anda kabul edemedi. Birkaç dakika sonra tekrar deneyin; sorun sürerse bizimle iletişime geçin.",
+		"%s: sunucu beklenmeyen bir yanıt döndü, HTTP %d", baglamMesaji, resp.StatusCode)
 }
 
 // ============================================================================
@@ -1640,7 +1651,7 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 
 	resp, err := httpClient.Get(pdfUrl)
 	if err != nil {
-		return fmt.Errorf("Sunucuya bağlanılamadı! Node.js çalışıyor mu ve internet bağlantınız düzgün mü? Detay: %v", err)
+		return sadeHata(mesajSunucuyaUlasilamadi, "imzasız PDF indirilemedi: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -1652,14 +1663,14 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 	// tüketmesin diye sınırlıyoruz.
 	pdfData, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20))
 	if err != nil || len(pdfData) == 0 {
-		return fmt.Errorf("PDF dosya içeriği okunamadı veya dosya boş!")
+		return sadeHata(mesajSayfayiYenile, "indirilen PDF okunamadı ya da boş")
 	}
 
 	// 2. PKCS11 oturumu aç: seçilen sertifikayı taşıyan kartı açabilen sürücü+slot (bkz.
 	// surucu_secimi.go — artık slots[0] varsayılmıyor).
 	idBytes, err := hex.DecodeString(certID)
 	if err != nil {
-		return fmt.Errorf("Sertifika ID formatı geçersiz!")
+		return sadeHata(mesajSayfayiYenile, "CertID hex değil: %q", certID)
 	}
 	// v1.5.0: kartın ATR'si PKCS#11 oturumu açılmadan önce PC/SC'den okunur (oturum açıkken
 	// bazı ara katmanlar kartı paylaşıma kapatabiliyor). Başarılı imzada sunucuya "bu ATR'li kart
@@ -1667,7 +1678,7 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 	kartTarama := pcscTara()
 	k, err := s.sertifikaOturumuAc(idBytes)
 	if errors.Is(err, ErrKartYok) {
-		return &kartHatasi{mesaj: "Kart okuyucuda takılı değil veya temas etmiyor!", neden: ErrKartYok}
+		return &kartHatasi{mesaj: mesajKartTakiliDegil, neden: ErrKartYok}
 	}
 	if err != nil {
 		return err
@@ -1681,9 +1692,10 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 		// güvenmiyoruz; gerçek imza yolu (bu fonksiyon) buraya kadar o bayrağa hiç bakmadan geldi.
 		if pErr, ok := err.(pkcs11.Error); ok && pErr == pkcs11.CKR_PIN_LOCKED {
 			bildir(SeviyeKritik, "PIN_KILITLI", fmt.Sprintf("Kart PIN'i GERÇEKTEN kilitli (Login CKR_PIN_LOCKED) — sertifika ID: %s, döküm: %s", certID, dokumNo))
-			return fmt.Errorf("❌ KART PIN KODU KİLİTLİ! PUK KODU İLE AÇMANIZ GEREKMEKTEDİR.")
+			return sadeHata(mesajPinKilitli, "Login: CKR_PIN_LOCKED")
 		}
-		return fmt.Errorf("❌ PIN Hatalı veya Kart Okunamadı! Lütfen PIN kodunuzu kontrol edip tekrar deneyin. (Detay: %v)", err)
+		pinDurumu, _ := getPinStatus(p, k.slot)
+		return pinHatasi(err, pinDurumu)
 	}
 	defer p.Logout(session)
 
@@ -1695,7 +1707,7 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 	keys, _, _ := p.FindObjects(session, 1)
 	p.FindObjectsFinal(session)
 	if len(keys) == 0 {
-		return fmt.Errorf("Bu sertifika ID'si için kartta ÖZEL ANAHTAR bulunamadı!")
+		return sadeHata(mesajAnahtarYok, "CKA_ID %s için özel anahtar yok", certID)
 	}
 
 	// Açık Sertifikayı Bul
@@ -1706,17 +1718,17 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 	certObjs, _, _ := p.FindObjects(session, 1)
 	p.FindObjectsFinal(session)
 	if len(certObjs) == 0 {
-		return fmt.Errorf("Kart içinde sertifika nesnesi okunamadı!")
+		return sadeHata(mesajSertifikaOkunamadi, "CKA_ID %s için sertifika nesnesi yok", certID)
 	}
 
 	valAttr, err := p.GetAttributeValue(session, certObjs[0], []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil)})
 	if err != nil || len(valAttr) == 0 || valAttr[0].Value == nil {
-		return fmt.Errorf("Sertifika veri içeriği (Value) karttan okunamadı!")
+		return sadeHata(mesajSertifikaOkunamadi, "sertifika CKA_VALUE okunamadı: %v", err)
 	}
 
 	cert, err := x509.ParseCertificate(valAttr[0].Value)
 	if err != nil {
-		return fmt.Errorf("Sertifika formatı ayrıştırılamadı (X509): %v", err)
+		return sadeHata(mesajSertifikaOkunamadi, "X509 ayrıştırılamadı: %v", err)
 	}
 
 	// SERTİFİKA SÜRESİ KONTROLÜ — ikinci güvence: aynı kontrol zaten tarayıcı tarafında (PIN
@@ -1727,8 +1739,11 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 	// tarihine hiç bakmaz — bu kontrolü BİZ koymazsak hiç kimse koymuyor demektir.
 	simdi := time.Now()
 	if simdi.Before(cert.NotBefore) || simdi.After(cert.NotAfter) {
-		return fmt.Errorf("❌ Bu sertifikanın geçerlilik süresi (%s – %s) imzalama anını kapsamıyor. Süresi dolmuş/henüz başlamamış bir sertifikayla imza atılamaz.",
-			cert.NotBefore.Format("2006-01-02"), cert.NotAfter.Format("2006-01-02"))
+		mesaj := fmt.Sprintf("Sertifikanızın süresi %s tarihinde dolmuş. Yeni sertifika için sertifikanızı aldığınız firmayla görüşün.", cert.NotAfter.Format("02.01.2006"))
+		if simdi.Before(cert.NotBefore) {
+			mesaj = fmt.Sprintf("Sertifikanız %s tarihinden itibaren geçerli olacak; bugün imza atılamıyor. Bilgisayarınızın tarih ve saatini de kontrol edin.", cert.NotBefore.Format("02.01.2006"))
+		}
+		return sadeHata(mesaj, "geçerlilik %s – %s, şimdi %s", cert.NotBefore.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339), simdi.Format(time.RFC3339))
 	}
 
 	var mech *pkcs11.Mechanism
@@ -1756,7 +1771,7 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 
 	pdfReader, err := pdf.NewReader(inputReader, size)
 	if err != nil {
-		return fmt.Errorf("PDF yapısı bozuk veya okuyucu başlatılamadı: %v", err)
+		return sadeHata(mesajSayfayiYenile, "PDF okuyucu başlatılamadı: %v", err)
 	}
 
 	var outputBuffer bytes.Buffer
@@ -1803,7 +1818,10 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 
 	// 5. İmzayı PDF'e Göm
 	if err := sign.Sign(inputReader, &outputBuffer, pdfReader, size, signerData); err != nil {
-		return fmt.Errorf("PAdES imza gömme işlemi başarısız: %v", err)
+		if akisSigner.donanimHatasi != nil { // kart imzayı reddetti / tamamlayamadı
+			return sadeHata(mesajKartImzalamadi, "PAdES gömme: %v", err)
+		}
+		return sadeHata(mesajSayfayiYenile, "PAdES gömme: %v", err)
 	}
 
 	// 6. İmzalı PAdES dosyasını Node.js Sunucusuna geri post et (Sync)
@@ -1836,7 +1854,7 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 
 	postResp, err := httpClient.Post(fmt.Sprintf("%s/api/itiraz/save_signed", NODE_API_URL), "application/json", bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		return fmt.Errorf("İmzalı dosya sunucuya gönderilemedi (Ağ Hatası): %v", err)
+		return sadeHata("İmzalı belge sunucuya gönderilemedi. İnternet bağlantınızı kontrol edin; sayfayı yenileyip belgenin imzalanıp imzalanmadığına bakın, imzalanmadıysa tekrar deneyin.", "save_signed POST: %v", err)
 	}
 	defer postResp.Body.Close()
 

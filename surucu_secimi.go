@@ -129,11 +129,15 @@ func oturumHatasiMesaji(hatalar []string) error {
 	ipucu := ""
 	for _, h := range hatalar {
 		if strings.Contains(h, "0x8") {
-			ipucu = " Kartınızın kendi üreticisinin sürücüsü kurulu olmayabilir ya da güncel değil (E-GÜVEN/SafeNet eToken için SafeNet Authentication Client, AKİS kart için AKİS sürücüsü)."
+			ipucu = " Bu genellikle kartın kendi sürücüsü kurulu olmadığında ya da eski olduğunda olur (E-GÜVEN eToken için SafeNet Authentication Client, AKİS kart için AKİS sürücüsü)."
 			break
 		}
 	}
-	return &kartHatasi{mesaj: fmt.Sprintf("Kart oturumu açılamadı: %s.%s", strings.Join(hatalar, "; "), ipucu), neden: ErrKartAcilamadi}
+	return &kartHatasi{
+		mesaj: "Kartınız takılı ama açılamadı." + ipucu,
+		detay: "Kart oturumu açılamadı: " + strings.Join(hatalar, "; "),
+		neden: ErrKartAcilamadi,
+	}
 }
 
 // kartOturumlari, kartı açılabilen her (sürücü, slot) için fn'i çağırır. fn true dönerse oturum
@@ -191,7 +195,7 @@ func (s *surucuSeti) sertifikaOturumuAc(certID []byte) (*kartOturumu, error) {
 		return nil, err
 	}
 	if k == nil {
-		return nil, fmt.Errorf("Seçilen sertifika takılı kartlarda bulunamadı. Kartı çıkarıp taktıysanız sayfayı yenileyip sertifikayı yeniden seçin.")
+		return nil, sadeHata("Seçtiğiniz sertifika takılı kartta bulunamadı. Kartı çıkarıp taktıysanız sayfayı yenileyip kartınızı yeniden okutun.", "CKA_ID %x hiçbir slotta yok", certID)
 	}
 	return k, nil
 }
