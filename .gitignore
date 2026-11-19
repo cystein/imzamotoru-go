@@ -19,3 +19,4 @@ main.go.orig.bak
 # dikkatsizce çalıştırılacak bir "git add -A"nın bunu yanlışlıkla public'e göndermesine karşı
 # hiçbir koruma sağlamıyordu — bu satır o riski kapatıyor.
 EL_KITABI.md
+imzaci-sim

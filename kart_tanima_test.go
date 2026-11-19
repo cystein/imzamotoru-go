@@ -30,7 +30,9 @@ func TestSurucuOnerisi(t *testing.T) {
 	akis := OkuyucuDurumu{Ad: "ACS ACR39U ICC Reader 0", ATR: "3B 9F ...", KartVar: true, Aile: KartAKIS}
 	safenet := OkuyucuDurumu{Ad: "AKS ifdh 0", KartVar: true, Aile: KartSafeNet}
 	bos := OkuyucuDurumu{Ad: "AKS VR 0"}
-	kart := func(o ...OkuyucuDurumu) PcscSonuc { return PcscSonuc{Kategori: PcscOkuyucuVarSurucuGerekli, Okuyucular: o} }
+	kart := func(o ...OkuyucuDurumu) PcscSonuc {
+		return PcscSonuc{Kategori: PcscOkuyucuVarSurucuGerekli, Okuyucular: o}
+	}
 	kod := func(o *SurucuOnerisi) string {
 		if o == nil {
 			return ""

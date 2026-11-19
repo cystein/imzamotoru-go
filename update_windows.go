@@ -53,6 +53,12 @@ type latestVersionInfo struct {
 	// hemen reddeder. Elle, tools/sign_release'in opsiyonel 6. argümanıyla set edilir; ayrı bir
 	// acil durum aracı — normal ./release.sh akışı bu alana asla otomatik bir şey yazmaz.
 	MinSupportedVersion string `json:"min_supported_version,omitempty"`
+	// Moduller (v1.6.0): modül bazında uzaktan kapatma, ör. {"baglanti_testi":{"acik":false}}.
+	// Alan yoksa ya da "acik" belirtilmemişse modül AÇIK sayılır. İmza modülü bundan etkilenmez.
+	Moduller map[string]struct {
+		Acik     *bool  `json:"acik"`
+		MinSurum string `json:"min_surum"`
+	} `json:"moduller,omitempty"`
 }
 
 // surumKarsilastir basit bir "X.Y.Z" semver-lite karşılaştırıcısı — bu projede sürüm numaraları
@@ -104,6 +110,13 @@ func guncellemeyiDenetle() {
 	// UZAKTAN KILL SWITCH — yeni bir sürüm çıkmış olsun ya da olmasın, HER kontrolde bakılır
 	// (bir kereye mahsus değil): sunucudaki latest.json bu istemcinin sürümünü artık desteklemez
 	// diyorsa, imzalama hemen durdurulur. bkz. latestVersionInfo.MinSupportedVersion.
+	bt := info.Moduller[btModul]
+	btKapali := (bt.Acik != nil && !*bt.Acik) || (bt.MinSurum != "" && surumKarsilastir(APP_VERSION, bt.MinSurum) < 0)
+	if onceki, _ := btModulKapali.Load(btModul); onceki != btKapali {
+		log.Printf("[UPDATE] bağlantı testi modülü uzaktan: kapali=%v", btKapali)
+	}
+	btModulKapali.Store(btModul, btKapali)
+
 	if info.MinSupportedVersion != "" && surumKarsilastir(APP_VERSION, info.MinSupportedVersion) < 0 {
 		// Eczacıya sade mesaj; sürüm numaraları yalnız bize giden bildirimde ve logda.
 		mesaj := "KolitakipIMZA programınızın sürümü eski olduğu için imza atılamıyor. Ekranın sağ altındaki KolitakipIMZA simgesine sağ tıklayıp \"Şimdi Güncellemeyi Kontrol Et\"i seçin (bu seçenek yoksa programı imza sayfasındaki kurulum bağlantısından yeniden kurun); güncelleme bitince tekrar deneyin."

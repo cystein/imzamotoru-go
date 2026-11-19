@@ -10,6 +10,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/inconshreveable/go-update v0.0.0-20160112193335-8152e7eb6ccf
 	github.com/miekg/pkcs11 v1.1.2
+	golang.org/x/sys v0.42.0
 )
 
 require (
@@ -25,6 +26,5 @@ require (
 	github.com/mattetti/filebuffer v1.0.1 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	golang.org/x/crypto v0.49.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 )

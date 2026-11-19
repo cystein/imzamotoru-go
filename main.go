@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -30,7 +31,6 @@ import (
 	"github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/revocation"
 	"github.com/digitorus/pdfsign/sign"
-	"github.com/gorilla/websocket"
 	"github.com/miekg/pkcs11"
 )
 
@@ -125,19 +125,12 @@ var jobQueue = make(chan CardJob, 100)
 // sessizce list_certs çağırıp kullanıcının adını/TCKN'sini onaysız okuyabilirdi.)
 // Platform yalnız itiraz için olmaktan çıkınca (fatura iptal dilekçesi) adres eimza.* oldu;
 // itiraz.* sayfaları yeni adrese yönlendirilene kadar oradan açılan sayfalar da çalışmalı.
-var izinliKaynaklar = map[string]bool{
-	"https://eimza.sgkkolitakip.web.tr":  true,
-	"https://itiraz.sgkkolitakip.web.tr": true, // eski adres
-	"http://localhost:3000":              true, // yerel geliştirme/test
-}
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return izinliKaynaklar[r.Header.Get("Origin")]
-	},
-}
-
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--simule" || os.Args[1] == "-simule") {
+		simuleCalistir(os.Args[2:])
+		return
+	}
+	btBaslatGercek()
 	// cardWorker() (donanım erişimi) kasıtlı olarak burada BAŞLAMIYOR — platformStartup()
 	// port'u tekil olarak ele geçirdiğini doğruladıktan SONRA başlatıyor. Böylece ikinci bir
 	// kopya (ör. exe'ye art arda çift tıklama) donanıma/akıllı karta hiç dokunmadan kapanır.
@@ -150,48 +143,7 @@ func main() {
 func startServer(ln net.Listener) {
 	log.Printf("[BAŞLATMA] %s hazır, port: %s\n", APP_NAME, PORT)
 
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			// CheckOrigin izin vermediğinde (veya bağlantı bir sebeple yükseltilemediğinde)
-			// Upgrade() zaten uygun bir HTTP hata yanıtı yazıp nil bir *Conn döndürüyor —
-			// eskiden bu hata görmezden gelinip nil conn üzerinde Close/ReadJSON çağrılıyordu,
-			// bu da her izinsiz kaynaktan gelen istekte panic'e (nil pointer dereference) yol açıyordu.
-			return
-		}
-		defer conn.Close()
-		for {
-			var msg RequestMessage
-			if err := conn.ReadJSON(&msg); err != nil {
-				break
-			}
-
-			// "ping" donanıma dokunmuyor, kart okuyucu meşgulse bile kuyrukta beklemeden
-			// anında cevap verir — web arayüzü bunu sürüm/aktiflik göstergesi için kullanır.
-			// Anlamlı işlem loglarına (kim ne zaman imzaladı vb.) karışmasın diye bilerek
-			// aşağıdaki log satırından önce, ayrı işleniyor.
-			if msg.Action == "ping" {
-				conn.WriteJSON(ResponseMessage{Status: "success", Data: map[string]string{"version": APP_VERSION}})
-				continue
-			}
-
-			log.Printf("[WEB-SOCKET] Gelen İstek -> Action: '%s', CertID: '%s', Döküm: '%s'", msg.Action, msg.CertID, msg.DokumNo)
-
-			replyChan := make(chan ResponseMessage, 1)
-			jobQueue <- CardJob{
-				Action:  msg.Action,
-				Pin:     msg.Pin,
-				Hash:    msg.Hash,
-				CertID:  msg.CertID,
-				DokumNo: msg.DokumNo,
-				Token:   msg.Token,
-				Reply:   replyChan,
-			}
-
-			res := <-replyChan
-			conn.WriteJSON(res)
-		}
-	})
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) { wsIsleyici(w, r, false) })
 	log.Fatal(http.Serve(ln, nil))
 }
 
