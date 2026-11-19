@@ -49,7 +49,7 @@ func onKontrolKablolu(agGecidi, oui string) btOnKontrol {
 		"aktif_arayuzler":     []any{map[string]any{"no": 12, "tur": "ethernet", "aciklama": "Realtek PCIe GbE Family Controller", "ag_gecidi": agGecidi, "varsayilan_yol": true, "metrik": 35}},
 		"vpn":                 map[string]any{"var": false, "varsayilan_yol_vpn": false, "arayuzler": []string{}},
 		"hotspot_ipuclari":    []string{},
-		"ikinci_yonlendirici": map[string]any{"ipucu": "yok", "ikinci_atlama": "85.105.1.1", "ikinci_atlama_ozel": false},
+		"ikinci_yonlendirici": map[string]any{"ipucu": "yok", "ikinci_atlama": "198.51.100.1", "ikinci_atlama_ozel": false},
 		"upnp":                map[string]any{"durum": "yok"},
 	}}
 }
@@ -177,19 +177,19 @@ func init() {
 	ekle(simSenaryo{ad: "upnp_sifirlandi", aciklama: "d1 + UPnP açık: modem açılınca Uptime sıfırlanır, dış IP aynı kalır",
 		onKontrol: func() btOnKontrol {
 			o := kablolu()
-			o.Bilgi["upnp"] = map[string]any{"durum": "var", "uptime_s": 86400, "baglanti": "Connected", "dis_ip": "81.214.10.20"}
+			o.Bilgi["upnp"] = map[string]any{"durum": "var", "uptime_s": 86400, "baglanti": "Connected", "dis_ip": "198.51.100.20"}
 			return o
-		}, baslangic: simDurum{kart: true, ag: true, upnp: true, uptime: 86400, disIP: "81.214.10.20"}, bitir: 230000, adimlar: []simAdim{
+		}, baslangic: simDurum{kart: true, ag: true, upnp: true, uptime: 86400, disIP: "198.51.100.20"}, bitir: 230000, adimlar: []simAdim{
 			{10000, kartDus("medya_baglantisi_yok")}, {130000, kartGel},
 			{170000, func(d *simDurum) []btGozlem { d.ag = true; d.uptime = 15; return agGel(d) }}}})
 	ekle(simSenaryo{ad: "upnp_dis_ip_degisti", aciklama: "d1 + UPnP: modem açılınca dış IP değişir (statik değil)",
 		onKontrol: func() btOnKontrol {
 			o := kablolu()
-			o.Bilgi["upnp"] = map[string]any{"durum": "var", "uptime_s": 86400, "baglanti": "Connected", "dis_ip": "81.214.10.20"}
+			o.Bilgi["upnp"] = map[string]any{"durum": "var", "uptime_s": 86400, "baglanti": "Connected", "dis_ip": "198.51.100.20"}
 			return o
-		}, baslangic: simDurum{kart: true, ag: true, upnp: true, uptime: 86400, disIP: "81.214.10.20"}, bitir: 230000, adimlar: []simAdim{
+		}, baslangic: simDurum{kart: true, ag: true, upnp: true, uptime: 86400, disIP: "198.51.100.20"}, bitir: 230000, adimlar: []simAdim{
 			{10000, kartDus("medya_baglantisi_yok")}, {130000, kartGel},
-			{170000, func(d *simDurum) []btGozlem { d.ag = true; d.uptime = 15; d.disIP = "78.188.44.55"; return agGel(d) }}}})
+			{170000, func(d *simDurum) []btGozlem { d.ag = true; d.uptime = 15; d.disIP = "198.51.100.55"; return agGel(d) }}}})
 }
 
 func simSenaryoListesi() string {

@@ -131,11 +131,11 @@ func senaryoyuCalistir(t *testing.T, ad string, hiz float64) {
 
 	c.WriteJSON(map[string]any{"modul": "baglanti_testi", "protokol": 1, "tip": "merhaba"})
 	c.WriteJSON(map[string]any{"modul": "baglanti_testi", "protokol": 1, "tip": "test_basla", "test_id": "t_" + ad,
-		"nonce": "nonce-" + ad + "-0123456789", "olcum_hedefi": "81.214.22.92", "beklenen_baglanti": "modem",
+		"nonce": "nonce-" + ad + "-0123456789", "olcum_hedefi": "203.0.113.10", "beklenen_baglanti": "modem",
 		"rapor_hedefi": "canli", "parametreler": map[string]any{"son_izleme_suresi_ms": 30000}})
 	// İkinci test reddedilmeli
 	c.WriteJSON(map[string]any{"modul": "baglanti_testi", "protokol": 1, "tip": "test_basla", "test_id": "t_ikinci_test",
-		"nonce": "nonce-ikinci-0123456789", "olcum_hedefi": "81.214.22.92", "beklenen_baglanti": "modem", "rapor_hedefi": "canli"})
+		"nonce": "nonce-ikinci-0123456789", "olcum_hedefi": "203.0.113.10", "beklenen_baglanti": "modem", "rapor_hedefi": "canli"})
 
 	var engeller []any
 	var sonDurum time.Time
@@ -300,7 +300,7 @@ func TestUPnPOkuma(t *testing.T) {
 		case r.URL.Path == "/ctl/IPConn" && strings.Contains(r.Header.Get("SOAPAction"), "GetStatusInfo"):
 			w.Write([]byte(`<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetStatusInfoResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"><NewConnectionStatus>Connected</NewConnectionStatus><NewLastConnectionError>ERROR_NONE</NewLastConnectionError><NewUptime>4242</NewUptime></u:GetStatusInfoResponse></s:Body></s:Envelope>`))
 		case r.URL.Path == "/ctl/IPConn" && strings.Contains(r.Header.Get("SOAPAction"), "GetExternalIPAddress"):
-			w.Write([]byte(`<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetExternalIPAddressResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"><NewExternalIPAddress>81.214.10.20</NewExternalIPAddress></u:GetExternalIPAddressResponse></s:Body></s:Envelope>`))
+			w.Write([]byte(`<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetExternalIPAddressResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"><NewExternalIPAddress>198.51.100.20</NewExternalIPAddress></u:GetExternalIPAddressResponse></s:Body></s:Envelope>`))
 		default:
 			w.WriteHeader(404)
 		}
@@ -312,7 +312,7 @@ func TestUPnPOkuma(t *testing.T) {
 		t.Fatal(err)
 	}
 	v, err := igd.oku(ctx)
-	if err != nil || v["uptime_s"] != float64(4242) || v["baglanti"] != "Connected" || v["dis_ip"] != "81.214.10.20" {
+	if err != nil || v["uptime_s"] != float64(4242) || v["baglanti"] != "Connected" || v["dis_ip"] != "198.51.100.20" {
 		t.Fatalf("%v %v", v, err)
 	}
 	if _, err := upnpAciklamaOku(ctx, "http://8.8.8.8/igd.xml"); err == nil {

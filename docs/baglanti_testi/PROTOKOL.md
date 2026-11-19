@@ -132,7 +132,7 @@ istemezse sayfa `test_iptal` gönderir. Aynı anda ikinci `test_basla` → `TEST
   ],
   "vpn":{"var":false,"varsayilan_yol_vpn":false,"arayuzler":[]},
   "hotspot_ipuclari":[],              // ör. "AG_GECIDI_BILINEN_HOTSPOT_ADRESI", "ARAYUZ_RNDIS", "ARAYUZ_WWAN"
-  "ikinci_yonlendirici":{"ipucu":"yok","ikinci_atlama":"85.105.1.1","ikinci_atlama_ozel":false},   // bilgi amaçlı, §4.4
+  "ikinci_yonlendirici":{"ipucu":"yok","ikinci_atlama":"198.51.100.1","ikinci_atlama_ozel":false},   // bilgi amaçlı, §4.4
   "upnp":{"durum":"yok"}             // ya da {"durum":"var","uptime_s":86123,"baglanti":"Connected","dis_ip":"…"}
 }
 ```
@@ -346,7 +346,7 @@ User-Agent: KolitakipIMZA/1.6.0 (baglanti_testi; protokol 1)
   sertifikası şimdilik yok. Gerçek donanım doğrulaması kullanıcının güvendiği bir eczanede yapılacak.
 - Test vektörü: `HMAC-SHA256(anahtar="anahtar", "nonce123" || 0x0A || '{"a":1}')` =
   `21c56838b9811d13dd75f2a3c3d588c59230bf3a3a1c82cb39f61b4f30ddd345`
-- Gövde base64'tür: .103'teki ModSecurity ham dosya yolu/komut benzeri metinlere 403 veriyor (EL_KITABI §9.16).
+- Gövde base64'tür: proxy'deki ModSecurity ham dosya yolu/komut benzeri metinlere 403 veriyor (EL_KITABI §9.16).
 - Sunucu ayrıca `test_id` + `nonce` eşleşmesini, nonce'un tek kullanımlığını ve **isteğin kaynak IP'sinin
   tarayıcı IP'siyle aynı olduğunu** denetler (exe ile tarayıcı aynı bağlantıda).
 
