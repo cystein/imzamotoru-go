@@ -2,11 +2,17 @@
 
 package main
 
-import "runtime"
+import (
+	"runtime"
 
-// Linux'ta gerçek gözlemci yok (saha Windows); yalnız --simule.
-func gercekGozlemciFabrikasi() func(t *btTest) btGozlemci { return nil }
+	"golang.org/x/sys/unix"
+)
 
 func isletimSistemiBilgisi() map[string]any {
-	return map[string]any{"ad": "linux", "surum": "", "mimari": runtime.GOARCH}
+	surum := ""
+	var u unix.Utsname
+	if unix.Uname(&u) == nil {
+		surum = unix.ByteSliceToString(u.Release[:])
+	}
+	return map[string]any{"ad": "linux", "surum": surum, "mimari": runtime.GOARCH}
 }

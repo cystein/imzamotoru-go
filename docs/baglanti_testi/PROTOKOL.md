@@ -422,6 +422,22 @@ Kullanıcı adı / SSID / tam MAC içermez.
 - Bilinen Windows davranışı: kapalı porta TCP bağlantısı RST sonrası yeniden denendiği için ~1–2 sn sürebilir;
   kısa zaman aşımında `reddedildi` yerine `zaman_asimi` görünebilir.
 
+## 11.4 Linux gözlemcisi (2.0.2)
+
+- Yönetici hakkı gerekmez: yol `/proc/net/route` (en uzun önek, ana tablo), arayüzler `/sys/class/net`
+  (operstate, carrier, tür, sürücü: rndis_host/cdc_ether/ipheth → `ARAYUZ_RNDIS`, qmi_wwan/cdc_mbim → mobil),
+  TCP yoklaması, TTL=2 (UDP + IP_RECVERR, tracepath yöntemi), UPnP.
+- **ARP:** gerçek ARP isteği yalnız programa `CAP_NET_RAW` verilmişse (`sudo setcap cap_net_raw+ep ./imzaci`).
+  O zaman her yoklama önbellekten bağımsız, taze bir ARP isteğidir (AF_PACKET). Yetki yoksa ARP sonucu
+  `yok_destek`, ön kontrolde `ARP_DESTEKLENMIYOR` + `arp.neden:"cap_net_raw_yok"`; ağ geçidi yalnız TCP ile izlenir.
+- Uyku: Linux'ta monotonik saat askıyı saymaz → `saat_atlamasi`. Arayüz olayları her yoklama turunda okunarak.
+- DHCP kirası okunmaz (`dhcp: null`, ağ yöneticisine bağlı).
+- `test_arayuzu` ek alanları: `operstate`, `carrier`, `arphrd`; `aciklama` = sürücü adı.
+
+**Not (her iki platform):** `ikinci_yonlendirici.ikinci_atlama_ozel` Türk Telekom hatlarında servis sağlayıcının
+iç ağı (10.x) yüzünden ikinci router olmadan da `true` çıkıyor (sahada ve geliştirme ağında görüldü). İpucu zayıf;
+tek başına "arkada router var" kanıtı sayılmamalı.
+
 ## 11.3 Saha bulguları (2026-11-19, ilk gerçek test, Windows 11, ethernet, Türk Telekom modemi)
 
 - ARP önbelleği: modem kapandığı an komşu durumu `reachable` iken SendARP **önbellekten cevap vermedi**
