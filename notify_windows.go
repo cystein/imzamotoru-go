@@ -71,15 +71,15 @@ func bildir(seviye Seviye, kod string, mesaj string) {
 		switch seviye {
 		case SeviyeKritik:
 			mDurum.SetTitle(fmt.Sprintf("⛔ %s", kisaMesaj))
-			systray.SetTooltip(fmt.Sprintf("%s v%s — ⛔ %s", APP_NAME, APP_VERSION, kisaMesaj))
+			systray.SetTooltip(fmt.Sprintf("%s v%s — ⛔ %s", APP_GORUNEN_AD, APP_VERSION, kisaMesaj))
 		case SeviyeUyari:
 			mDurum.SetTitle(fmt.Sprintf("⚠️ %s", kisaMesaj))
-			systray.SetTooltip(fmt.Sprintf("%s v%s — ⚠️ %s", APP_NAME, APP_VERSION, kisaMesaj))
+			systray.SetTooltip(fmt.Sprintf("%s v%s — ⚠️ %s", APP_GORUNEN_AD, APP_VERSION, kisaMesaj))
 		default:
 			// Sürüm bilgisi artık ayrıca sabit bir tepsi menü satırında (mSurum, bkz.
 			// main_windows.go) HER durumda görünür kalıyor — burada tekrar etmeye gerek yok.
 			mDurum.SetTitle("Durum: Çalışıyor")
-			systray.SetTooltip(fmt.Sprintf("%s çalışıyor (v%s)", APP_NAME, APP_VERSION))
+			systray.SetTooltip(fmt.Sprintf("%s çalışıyor (v%s)", APP_GORUNEN_AD, APP_VERSION))
 		}
 	}
 

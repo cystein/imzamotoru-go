@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -129,15 +128,6 @@ var jobQueue = make(chan CardJob, 100)
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--simule" || os.Args[1] == "-simule") {
 		simuleCalistir(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && (os.Args[1] == "--teshis" || os.Args[1] == "-teshis") {
-		teshisCalistir(os.Args[2:])
-		return
-	}
-	// Saha test exe'si (KolitakipIMZA-teshis.exe) çift tıklanınca doğrudan teşhis moduna girer.
-	if strings.Contains(strings.ToLower(filepath.Base(os.Args[0])), "teshis") {
-		teshisCalistir(os.Args[1:])
 		return
 	}
 	btBaslatGercek()
@@ -296,12 +286,22 @@ func surucuHatasiKullaniciMesaji(err error, kategori PcscKategori) string {
 	// PcscOkuyucuVarSurucuGerekli ya da PcscBilinmiyor (Linux/teşhis başarısız) — burada gerçekten
 	// bir sürücü eksikliği söz konusu, initDriver()'ın kendi hatasına göre spesifikleştiriyoruz.
 	if errors.Is(err, ErrSurucuHicKurulmamis) {
-		return "Bilgisayarınızda kart sürücüsü kurulu değil. Sertifikanızı aldığınız firmanın sürücüsünü kurup KolitakipIMZA'yı yeniden başlatın."
+		return "Bilgisayarınızda kart sürücüsü kurulu değil. Sertifikanızı aldığınız firmanın sürücüsünü kurup Kolitakip Asistan'ı yeniden başlatın."
 	}
 	if strings.Contains(err.Error(), "ERROR_BAD_EXE_FORMAT") {
-		return "Bilgisayarınızdaki kart sürücüsü bu Windows ile uyumlu değil. Sürücüyü kaldırıp kart üreticinizin sitesinden 64 bit sürümünü kurun, sonra KolitakipIMZA'yı yeniden başlatın."
+		return "Bilgisayarınızdaki kart sürücüsü bu Windows ile uyumlu değil. Sürücüyü kaldırıp kart üreticinizin sitesinden 64 bit sürümünü kurun, sonra Kolitakip Asistan'ı yeniden başlatın."
 	}
 	return "Kart sürücünüz bulundu ama çalıştırılamadı. Kart okuyucunuzu çıkarıp tekrar takın ya da bilgisayarı yeniden başlatın; sorun sürerse bizimle iletişime geçin."
+}
+
+// donanimYokMu: öneri kodu yalnız "takılı donanım yok" diyorsa (sürücü sorunu değil).
+func donanimYokMu(oneriEki string) bool {
+	for _, k := range []string{OneriOkuyucuYok, OneriKartYok, OneriServisKapali} {
+		if oneriEki == " | öneri: "+k {
+			return true
+		}
+	}
+	return false
 }
 
 // sonBildirilenTeshis, en son SUNUCUYA bildirilen (log değil, bildir() ile POST edilen) tam
@@ -359,7 +359,15 @@ func surucuyuDeneYeninenBildir() *surucuSeti {
 			return nil // aynı teşhis daha önce sunucuya bildirildi, tekrar POST atma
 		}
 		sonBildirilenTeshis = tamMesaj
-		bildir(SeviyeKritik, "SURUCU_YOK", tamMesaj)
+		// v2.0.0 (EL_KITABI §9.19): okuyucu yok / kart takılı değil / akıllı kart hizmeti kapalı
+		// durumları ayrı kod ve Uyarı seviyesiyle gider — sabah açılışlarındaki bu gürültü, kart
+		// takılı ama sürücüsü eksik olan (gerçekten yardım gereken) makineleri gizlemesin.
+		// (SeviyeBilgi sunucuya hiç gönderilmediği ve tepsiyi "Çalışıyor" gösterdiği için Uyarı.)
+		if donanimYokMu(oneriKodu) {
+			bildir(SeviyeUyari, "DONANIM_YOK", tamMesaj)
+		} else {
+			bildir(SeviyeKritik, "SURUCU_YOK", tamMesaj)
+		}
 		return nil
 	}
 	surucuOzetiniKaydet(p)

@@ -104,7 +104,7 @@ type SurucuOnerisi struct {
 	ATR     string     `json:"atr,omitempty"`
 }
 
-const oneriAdimlari = " Sürücüyü kurduktan sonra kartı USB'den çıkarıp yeniden takın ve KolitakipIMZA'yı yeniden başlatın. Ayrıntılı rehber ve indirme bağlantısı imza sayfasında."
+const oneriAdimlari = " Sürücüyü kurduktan sonra kartı USB'den çıkarıp yeniden takın ve Kolitakip Asistan'ı (eski adıyla KolitakipIMZA) yeniden başlatın. Ayrıntılı rehber ve indirme bağlantısı imza sayfasında."
 
 var oneriMesajlari = map[string]string{
 	OneriServisKapali:   "Windows Akıllı Kart Hizmeti çalışmıyor ya da bilgisayara hiç kart okuyucu takılı değil. Kart okuyucunuzu (ya da USB e-imzanızı) takın; sorun sürerse bilgisayarı yeniden başlatın.",

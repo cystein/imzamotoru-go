@@ -14,7 +14,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	update "github.com/inconshreveable/go-update"
@@ -53,7 +55,12 @@ type latestVersionInfo struct {
 	// hemen reddeder. Elle, tools/sign_release'in opsiyonel 6. argümanıyla set edilir; ayrı bir
 	// acil durum aracı — normal ./release.sh akışı bu alana asla otomatik bir şey yazmaz.
 	MinSupportedVersion string `json:"min_supported_version,omitempty"`
-	// Moduller (v1.6.0): modül bazında uzaktan kapatma, ör. {"baglanti_testi":{"acik":false}}.
+	// GeriAl (v2.0.0): latest.json'daki sürüm bu istemciden ESKİYSE yalnız bu alan true iken eski
+	// sürüme dönülür (bilinçli geri alma). Eskiden her farklı sürüme geçiliyordu; aşamalı yayında
+	// (deneme eczanesine yeni sürüm kurulup latest.json eski sürümde bekletilirken) yeni kurulum
+	// kendiliğinden geri iniyordu. Geri alma prosedürü: EL_KITABI §7.
+	GeriAl bool `json:"geri_al,omitempty"`
+	// Moduller (v2.0.0): modül bazında uzaktan kapatma, ör. {"baglanti_testi":{"acik":false}}.
 	// Alan yoksa ya da "acik" belirtilmemişse modül AÇIK sayılır. İmza modülü bundan etkilenmez.
 	Moduller map[string]struct {
 		Acik     *bool  `json:"acik"`
@@ -119,7 +126,7 @@ func guncellemeyiDenetle() {
 
 	if info.MinSupportedVersion != "" && surumKarsilastir(APP_VERSION, info.MinSupportedVersion) < 0 {
 		// Eczacıya sade mesaj; sürüm numaraları yalnız bize giden bildirimde ve logda.
-		mesaj := "KolitakipIMZA programınızın sürümü eski olduğu için imza atılamıyor. Ekranın sağ altındaki KolitakipIMZA simgesine sağ tıklayıp \"Şimdi Güncellemeyi Kontrol Et\"i seçin (bu seçenek yoksa programı imza sayfasındaki kurulum bağlantısından yeniden kurun); güncelleme bitince tekrar deneyin."
+		mesaj := "Kolitakip Asistan (eski adıyla KolitakipIMZA) programınızın sürümü eski olduğu için imza atılamıyor. Ekranın sağ altındaki program simgesine sağ tıklayıp \"Şimdi Güncellemeyi Kontrol Et\"i seçin (bu seçenek yoksa programı imza sayfasındaki kurulum bağlantısından yeniden kurun); güncelleme bitince tekrar deneyin."
 		if imzalamaEngelMesaji() != mesaj {
 			teknik := fmt.Sprintf("Bu istemci sürümü (v%s) artık güvenli kabul edilmiyor (asgari desteklenen: v%s) — imzalama durduruldu.", APP_VERSION, info.MinSupportedVersion)
 			log.Println("⛔ [UPDATE] KILL SWITCH devrede:", teknik)
@@ -132,6 +139,10 @@ func guncellemeyiDenetle() {
 
 	if info.Version == "" || info.Version == APP_VERSION {
 		return // güncel
+	}
+	if surumKarsilastir(info.Version, APP_VERSION) < 0 && !info.GeriAl {
+		log.Printf("[UPDATE] latest.json eski sürümü (%s) gösteriyor ama geri_al işaretli değil — geçilmiyor (bu kurulum %s)", info.Version, APP_VERSION)
+		return
 	}
 
 	// İmzasız/sha256'sız bir "güncelleme" asla kabul edilmez — eskiden sha256 boşsa bile
@@ -149,13 +160,20 @@ func guncellemeyiDenetle() {
 	binResp, err := updateHTTPClient.Get(info.URL)
 	if err != nil {
 		log.Printf("[UPDATE] Yeni sürüm indirilemedi: %v", err)
+		guncellemeHatasiBildir("indirme", info.Version, err)
 		return
 	}
 	defer binResp.Body.Close()
+	if binResp.StatusCode != http.StatusOK {
+		log.Printf("[UPDATE] Yeni sürüm indirilemedi: HTTP %d", binResp.StatusCode)
+		guncellemeHatasiBildir("indirme", info.Version, fmt.Errorf("HTTP %d", binResp.StatusCode))
+		return
+	}
 
 	gzReader, err := gzip.NewReader(binResp.Body)
 	if err != nil {
 		log.Printf("[UPDATE] Gzip açılamadı (bozuk indirme olabilir, bir sonraki denemede tekrar denenecek): %v", err)
+		guncellemeHatasiBildir("gzip", info.Version, err)
 		return
 	}
 	defer gzReader.Close()
@@ -167,6 +185,7 @@ func guncellemeyiDenetle() {
 	data, err := io.ReadAll(io.LimitReader(gzReader, maxGuncellemeBoyutu))
 	if err != nil {
 		log.Printf("[UPDATE] Yeni sürüm içeriği okunamadı (bozuk indirme olabilir, bir sonraki denemede tekrar denenecek): %v", err)
+		guncellemeHatasiBildir("okuma", info.Version, err)
 		return
 	}
 
@@ -212,14 +231,39 @@ func guncellemeyiDenetle() {
 	yenidenBaslat()
 }
 
+// guncellemeHatasiBildir (v2.0.0, EL_KITABI §9.18): güncelleme indirilemediğinde/açılamadığında
+// bunu merkeze bildirir. Eskiden yalnız yerel loga yazılıyordu; 2026-11-12'de bir makinenin günlerce
+// 1.3.1'de kaldığını ancak erişim logundan dolaylı çıkarabildik. Aynı (aşama, hedef sürüm) süreç
+// başına bir kez bildirilir. Hata metnindeki yerel dosya yolları (kullanıcı adı içerebilir) silinir.
+var (
+	guncellemeHatasiMu       sync.Mutex
+	bildirilenGuncellemeHata = map[string]bool{}
+	yerelYolDeseni           = regexp.MustCompile(`[A-Za-z]:\\[^"'\s]*`)
+)
+
+func guncellemeHatasiBildir(asama, hedef string, err error) {
+	anahtar := asama + "|" + hedef
+	guncellemeHatasiMu.Lock()
+	if bildirilenGuncellemeHata[anahtar] {
+		guncellemeHatasiMu.Unlock()
+		return
+	}
+	bildirilenGuncellemeHata[anahtar] = true
+	guncellemeHatasiMu.Unlock()
+	metin := yerelYolDeseni.ReplaceAllString(fmt.Sprint(err), "<yol>")
+	bildir(SeviyeUyari, "GUNCELLEME_BASARISIZ", fmt.Sprintf("%s: %s (hedef sürüm %s, mevcut %s)", asama, metin, hedef, APP_VERSION))
+}
+
 func yenidenBaslat() {
 	exePath, err := os.Executable()
 	if err != nil {
 		log.Printf("[UPDATE] Yeniden başlatılamadı: %v", err)
+		guncellemeHatasiBildir("yeniden_baslatma", APP_VERSION, err)
 		return
 	}
 	if err := exec.Command(exePath).Start(); err != nil {
 		log.Printf("[UPDATE] Yeni süreç başlatılamadı: %v", err)
+		guncellemeHatasiBildir("yeniden_baslatma", APP_VERSION, err)
 		return
 	}
 	os.Exit(0)

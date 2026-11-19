@@ -1,6 +1,11 @@
 #!/bin/sh
 # Var olan kurulumlar için self-update paketini yayınlar.
 # Kullanım: ./release.sh 1.2.0 [asgari-desteklenen-surum]
+#          ADAY=1 ./release.sh 2.0.0      → AŞAMALI YAYIN (aday): latest.json'a DOKUNMAZ, imzalı
+#              bilgileri latest-aday.json'a yazar ve GitHub Release'i "pre-release" yapar
+#              (/releases/latest/ bağlantıları eski sürümde kalır). Deneme kurulumu Setup.exe'yi
+#              .../releases/download/vX/KolitakipIMZA-Setup.exe'den alır. Herkese açmak için:
+#              ./yayina_al.sh 2.0.0
 #
 # İkinci argüman OPSİYONEL: verilirse latest.json'a min_supported_version yazılır, ondan eski
 # istemciler bir sonraki kontrolde imzalamayı durdurup güncellenir (bkz. tools/sign_release,
@@ -57,7 +62,14 @@ DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/KolitakipIMZA.exe.
 
 # sha256 + ECDSA imzası burada, imzalanmamış (gzip'siz) exe üzerinden üretiliyor — istemci de
 # indirdiğini gzip'ten çıkardıktan SONRA aynı ham byte'ları doğruluyor.
-go run ./tools/sign_release "$PRIVATE_KEY" KolitakipIMZA.exe "$VERSION" "$DOWNLOAD_URL" "$DEST/latest.json" ${MIN_SURUM:+"$MIN_SURUM"}
+HEDEF_JSON="$DEST/latest.json"
+ON_SURUM=""
+if [ "${ADAY:-0}" = "1" ]; then
+	HEDEF_JSON="$DEST/latest-aday.json"
+	ON_SURUM="--prerelease"
+	echo "AŞAMALI YAYIN: latest.json'a dokunulmuyor -> $HEDEF_JSON"
+fi
+go run ./tools/sign_release "$PRIVATE_KEY" KolitakipIMZA.exe "$VERSION" "$DOWNLOAD_URL" "$HEDEF_JSON" ${MIN_SURUM:+"$MIN_SURUM"}
 
 gzip -9 -f -c KolitakipIMZA.exe > KolitakipIMZA.exe.gz
 
@@ -67,15 +79,19 @@ gzip -9 -f -c KolitakipIMZA.exe > KolitakipIMZA.exe.gz
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
 	gh release upload "$TAG" KolitakipIMZA.exe.gz --repo "$REPO" --clobber
 else
-	gh release create "$TAG" KolitakipIMZA.exe.gz --repo "$REPO" \
-		--title "KolitakipIMZA $TAG" --notes "Self-update kanalı yayını."
+	gh release create "$TAG" KolitakipIMZA.exe.gz --repo "$REPO" $ON_SURUM \
+		--title "Kolitakip Asistan $TAG" --notes "Self-update kanalı yayını."
 fi
 
 echo ""
 echo "OK -> v$VERSION imzalanıp self-update kanalına yayınlandı."
 echo "  - KolitakipIMZA.exe.gz -> GitHub Release $TAG ($REPO)"
-echo "  - latest.json          -> $DEST/latest.json (bizim sunucumuz)"
-echo "Var olan kurulumlar 6 saat içinde (veya yeniden başlatılınca) otomatik güncellenecek."
+echo "  - imzalı bilgiler      -> $HEDEF_JSON (bizim sunucumuz)"
+if [ "${ADAY:-0}" = "1" ]; then
+	echo "AŞAMALI: var olan kurulumlar GÜNCELLENMEYECEK. Herkese açmak için: ./yayina_al.sh $VERSION"
+else
+	echo "Var olan kurulumlar 6 saat içinde (veya yeniden başlatılınca) otomatik güncellenecek."
+fi
 echo ""
 echo "Installer'ı da tazelemek isterseniz: git push sonrası"
 echo "  gh workflow run build-installer.yml --repo $REPO"

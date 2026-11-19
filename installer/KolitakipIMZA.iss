@@ -12,20 +12,24 @@
 ; kullanıcı hesabının klasörü olduğu için hem kurulum hem self-update admin/UAC'a hiç ihtiyaç
 ; duymadan çalışır. Chrome/Slack/Discord gibi pek çok uygulama tam bu sebeple bu deseni kullanır.
 
+; v2.0.0: görünen ad "Kolitakip Asistan" oldu. MyAppName (klasör, exe, Başlangıç kısayolu) ve AppId
+; bilerek DEĞİŞMEDİ: eski kurulumların üzerine kurulum ve otomatik güncelleme bu adlara bağlı.
 #define MyAppName "KolitakipIMZA"
-#define MyAppVersion "1.5.1"
+#define MyAppDisplayName "Kolitakip Asistan"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Kolitakip"
 #define MyAppURL "https://eimza.sgkkolitakip.web.tr"
 #define MyAppExeName "KolitakipIMZA.exe"
 
 [Setup]
 AppId={{A4F72625-6C55-4645-B0B3-45AC71C607C9}
-AppName={#MyAppName}
+AppName={#MyAppDisplayName}
+AppVerName={#MyAppDisplayName} {#MyAppVersion}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 DefaultDirName={localappdata}\{#MyAppName}
-DefaultGroupName={#MyAppName}
+DefaultGroupName={#MyAppDisplayName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64
@@ -43,11 +47,16 @@ Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 Source: "..\KolitakipIMZA.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppDisplayName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
+[InstallDelete]
+; Eski (KolitakipIMZA adlı) Başlat menüsü kısayolu — yenisi "Kolitakip Asistan" adıyla geliyor.
+Type: files; Name: "{userprograms}\KolitakipIMZA\KolitakipIMZA.lnk"
+Type: dirifempty; Name: "{userprograms}\KolitakipIMZA"
+
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppName} şimdi başlatılsın"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppDisplayName} şimdi başlatılsın"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F"; Flags: runhidden; RunOnceId: "StopAppOnUninstall"

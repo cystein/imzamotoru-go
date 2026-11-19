@@ -1,43 +1,41 @@
-name: KolitakipIMZA Installer Üret
+name: Kolitakip Asistan (KolitakipIMZA) Installer Üret
 
 on:
   workflow_dispatch:
 
 jobs:
-  # 1. Adım: Windows exe'yi burada, Ubuntu üzerinde mingw-w64 ile cross-compile ediyoruz —
-  #    aynı kanıtlanmış tarif (build_windows.sh), Windows makinesine hiç gerek yok.
+  # 1. Adım (v2.0.0'dan beri): exe burada DERLENMİYOR. release.sh'in GitHub Release'e yüklediği,
+  #    ECDSA ile imzalanmış KolitakipIMZA.exe.gz indirilir ve sunucudaki latest.json'daki sha256 ile
+  #    karşılaştırılır. Böylece Setup.exe ile otomatik güncelleme BAYT BAYT aynı exe'yi taşır ve
+  #    bağlantı testi HMAC anahtarı yalnız yayın bilgisayarında kalır (GitHub secret'ı gerekmez).
+  #    Önce ./release.sh çalıştırılmış olmalı.
   build-exe:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-
-      - name: mingw-w64 kur
-        run: sudo apt-get update && sudo apt-get install -y mingw-w64
-
-      - name: İkon kaynağını (rsrc) üret
-        run: |
-          go install github.com/akavel/rsrc@latest
-          "$(go env GOPATH)/bin/rsrc" -ico assets/icon.ico -o rsrc_windows_amd64.syso
-
-      - name: Windows exe derle
+      - name: Yayınlanmış exe'yi indir ve doğrula
         env:
-          # Bağlantı testi HMAC anahtarı (PROTOKOL §8.2). Secret yoksa anahtar_no=0 ile derlenir.
-          BT_NO: ${{ secrets.BAGLANTI_TESTI_ANAHTAR_NO }}
-          BT_HEX: ${{ secrets.BAGLANTI_TESTI_HMAC_ANAHTARI }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          BT_LDFLAGS=""
-          if [ -n "$BT_NO" ] && [ -n "$BT_HEX" ]; then
-            BT_LDFLAGS="-X main.btAnahtarNo=$BT_NO -X main.btAnahtarHex=$BT_HEX"
-            echo "Bağlantı testi anahtarı: anahtar_no=$BT_NO"
-          else
-            echo "::warning::Bağlantı testi anahtarı secret'ı yok — anahtar_no=0 ile derleniyor"
+          VERSION=$(sed -n 's/.*APP_VERSION = "\(.*\)".*/\1/p' version.go)
+          TAG="v$VERSION"
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern KolitakipIMZA.exe.gz --clobber
+          gunzip -f KolitakipIMZA.exe.gz
+          # Aşamalı yayında (ADAY=1 ./release.sh) imzalı bilgiler latest-aday.json'da durur.
+          LATEST=$(curl -fsS https://eimza.sgkkolitakip.web.tr/imza-motoru/latest.json)
+          if [ "$(echo "$LATEST" | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])')" != "$VERSION" ]; then
+            LATEST=$(curl -fsS https://eimza.sgkkolitakip.web.tr/imza-motoru/latest-aday.json)
           fi
-          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
-            go build -ldflags "-H=windowsgui $BT_LDFLAGS" -o KolitakipIMZA.exe .
+          BEKLENEN_SURUM=$(echo "$LATEST" | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])')
+          BEKLENEN_SHA=$(echo "$LATEST" | python3 -c 'import sys,json; print(json.load(sys.stdin)["sha256"])')
+          GERCEK_SHA=$(sha256sum KolitakipIMZA.exe | cut -d' ' -f1)
+          echo "version.go=$VERSION latest.json=$BEKLENEN_SURUM"
+          echo "sha256 beklenen=$BEKLENEN_SHA gerçek=$GERCEK_SHA"
+          if [ "$BEKLENEN_SURUM" != "$VERSION" ] || [ "$BEKLENEN_SHA" != "$GERCEK_SHA" ]; then
+            echo "::error::Release exe'si latest.json ile eşleşmiyor — önce ./release.sh çalıştırın"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,5 +98,5 @@ jobs:
             gh release upload "$TAG" "$ASSET" --repo "$REPO" --clobber
           else
             gh release create "$TAG" "$ASSET" --repo "$REPO" \
-              --title "KolitakipIMZA $TAG" --notes "Otomatik CI derlemesi."
+              --title "Kolitakip Asistan $TAG" --notes "Otomatik CI derlemesi."
           fi

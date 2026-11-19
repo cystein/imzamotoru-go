@@ -100,7 +100,7 @@ func tanilamaRaporuKaydet() {
 
 	yukluSurucular, sonSurucu := surucuRaporSatirlari()
 	rapor := fmt.Sprintf(
-		"KolitakipIMZA Tanılama Raporu\n"+
+		APP_GORUNEN_AD+" (KolitakipIMZA) Tanılama Raporu\n"+
 			"Oluşturulma: %s\n"+
 			"Sürüm: %s\n"+
 			"İşletim Sistemi/Mimari: %s/%s\n"+
@@ -140,7 +140,7 @@ func tanilamaRaporuKaydet() {
 func onTrayReady() {
 	logDosyasiniAyarla()
 	systray.SetIcon(trayIcon)
-	systray.SetTitle(APP_NAME)
+	systray.SetTitle(APP_GORUNEN_AD)
 
 	// Port'u BİR KEZ, kalıcı olarak ayırıyoruz ve aynı listener'ı hem tekillik kontrolü hem
 	// de gerçek servis için kullanıyoruz (önceki sürümde ayrı bir "probe" ile kontrol edip
@@ -150,7 +150,7 @@ func onTrayReady() {
 	// (cardWorker() bilerek burada başlamıyor) kullanıcıyı tepside bilgilendirip kapanıyoruz.
 	ln, err := net.Listen("tcp", "127.0.0.1:"+PORT)
 	if err != nil {
-		systray.SetTooltip(APP_NAME + " zaten çalışıyor (başka bir kopya açık)")
+		systray.SetTooltip(APP_GORUNEN_AD + " zaten çalışıyor (başka bir kopya açık)")
 		mZaten := systray.AddMenuItem("⚠️ Zaten çalışıyor, bu kopya kapanacak", "")
 		mZaten.Disable()
 		go func() {
@@ -160,7 +160,7 @@ func onTrayReady() {
 		return
 	}
 
-	systray.SetTooltip(fmt.Sprintf("%s çalışıyor (v%s)", APP_NAME, APP_VERSION))
+	systray.SetTooltip(fmt.Sprintf("%s çalışıyor (v%s)", APP_GORUNEN_AD, APP_VERSION))
 
 	// mDurum paket seviyesinde tanımlı (notify_windows.go) — burada sadece atanıyor, böylece
 	// bildir() farklı bir goroutine'den (cardWorker, update kontrolü) tepsi başlığını/tooltip'i

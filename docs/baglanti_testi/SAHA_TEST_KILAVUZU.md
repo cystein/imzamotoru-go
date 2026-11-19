@@ -1,22 +1,19 @@
 # Bağlantı Testi — Eczanede Saha Doğrulama Kılavuzu
 
-Bu kılavuz, bağlantı testi modülünü yayından önce **gerçek bir eczane bilgisayarında** denemek içindir.
+Bu kılavuz, Kolitakip Asistan 2.0'ın bağlantı testini **gerçek bir eczane bilgisayarında** denemek içindir.
 Amaç, programın modem kapatma, kablo çekme, Wi-Fi ve hotspot gibi durumları doğru ayırt ettiğini görmek.
 Test yaklaşık **1–1,5 saat** sürer. İnternet testler sırasında birkaç kez kesilecek; eczanenin yoğun
 olmadığı bir saatte yapın (Medula'da açık işlem olmasın).
 
 ## Hazırlık
 
-1. Kolitakip'ten gelen **`KolitakipIMZA-teshis.exe`** dosyasını masaüstüne kopyalayın.
-   - Bu dosya, bilgisayarda kurulu KolitakipIMZA'yı **değiştirmez**; e-imza normal çalışmaya devam eder.
-   - Windows "bilinmeyen yayıncı" uyarısı verirse: **Ek bilgi → Yine de çalıştır.**
-2. Masaüstündeki dosyaya **çift tıklayın**. Siyah bir pencere açılır ve "ÖN KONTROL" yazar.
-3. Pencerede **"İzleme başladı. Test adımını şimdi yapın."** yazınca aşağıdaki adımlardan birini yapın.
-4. Adım bitince bir dakika bekleyin, sonra pencereye tıklayıp **Enter**'a basın. Program bir dakika daha
-   izler ve **masaüstüne `kolitakip_baglanti_….json`** dosyasını kaydeder.
-5. Pencerede "Kapatmak için Enter'a basın" yazınca Enter'a basın.
-6. **Her adım için programı yeniden açın** (her adım ayrı bir dosya üretir). Dosya adlarını değiştirmeyin;
-   hangi adımın hangi saatte yapıldığını aşağıdaki tabloya yazın.
+1. Bilgisayarda **Kolitakip Asistan 2.0** (eski adıyla KolitakipIMZA) çalışıyor olmalı. Program kendini otomatik
+   günceller; saatin yanındaki simgenin üzerine gelince "v2.0.0" yazmalı. Yazmıyorsa simgeye sağ tıklayıp
+   **Şimdi Güncellemeyi Kontrol Et** deyin.
+2. Kolitakip'e girip **statik IP / bağlantı testi** sayfasını açın.
+3. Her adımda sayfadan testi başlatın; sayfa "test başladı" deyince aşağıdaki adımı yapın, her şey normale
+   dönünce bir dakika bekleyip sayfadan testi bitirin. Sayfa sonucu bir dakika sonra gösterir.
+4. **Her adım ayrı bir testtir.** Hangi adımı hangi saatte yaptığınızı aşağıdaki tabloya yazın.
 
 > Toplanan bilgi: ağ kartının türü ve adı, modemin yerel adresi ve üretici kısa kodu, modemin cevap
 > verip vermediği, bağlantının ne zaman kesilip geldiği. Kablosuz ağ adı, tam donanım adresleri,
@@ -24,8 +21,8 @@ olmadığı bir saatte yapın (Medula'da açık işlem olmasın).
 
 ## Adımlar
 
-Her satırda: programı açın → "İzleme başladı" yazısını bekleyin → **10 sn bekleyin** → adımı yapın →
-her şey normale dönünce **1 dk bekleyin** → Enter.
+Her satırda: sayfadan testi başlatın → **10 sn bekleyin** → adımı yapın → her şey normale dönünce
+**1 dk bekleyin** → sayfadan testi bitirin.
 
 | # | Bağlantı | Yapılacak | Not alın |
 |---|---|---|---|
@@ -35,22 +32,22 @@ her şey normale dönünce **1 dk bekleyin** → Enter.
 | 4a | Wi-Fi | Sağ alttan **Wi-Fi'yi kapatın** (ya da Uçak modu), 20 sn bekleyin, açın. | Saatler |
 | 4b | Herhangi | **Ayarlar → Ağ → Bağdaştırıcı seçenekleri** → ağ kartına sağ tık **Devre dışı bırak**, 20 sn sonra **Etkinleştir**. | Saatler |
 | 5 | Modemin arkasında ayrı bir router/erişim noktası varsa | Bilgisayar router'a bağlıyken **yalnız modemin** fişini 2 dk çekip takın (router açık kalsın). | Saatler; böyle bir düzen yoksa "yok" yazın |
-| 6 | Telefon hotspot | Bilgisayarı telefonun **kişisel erişim noktasına** bağlayın, programı açın; telefonda **uçak modunu** açın, 20 sn sonra kapatın. | Telefon markası; saatler |
-| 7 | Telefon USB | Telefonu USB kabloyla takıp **USB internet paylaşımını** açın; programı açın, 1 dk sonra Enter. | Telefon markası |
-| 8 | VPN | Bilgisayarda bir VPN programı varsa açın, programı çalıştırın, 1 dk sonra Enter. | VPN adı; yoksa "yok" |
-| 9 | Kablo + Wi-Fi | Kablo takılıyken Wi-Fi'ye de bağlanın; programı açın, 1 dk sonra Enter. | — |
-| 10a | Uyku | Programı açın, **Başlat → Güç → Uyku**; 1 dk sonra bilgisayarı uyandırın, 1 dk bekleyin, Enter. | Saatler |
+| 6 | Telefon hotspot | Bilgisayarı telefonun **kişisel erişim noktasına** bağlayın, testi başlatın; telefonda **uçak modunu** açın, 20 sn sonra kapatın. | Telefon markası; saatler |
+| 7 | Telefon USB | Telefonu USB kabloyla takıp **USB internet paylaşımını** açın; testi başlatın, 1 dk sonra bitirin. | Telefon markası |
+| 8 | VPN | Bilgisayarda bir VPN programı varsa açın, testi başlatın, 1 dk sonra bitirin. | VPN adı; yoksa "yok" |
+| 9 | Kablo + Wi-Fi | Kablo takılıyken Wi-Fi'ye de bağlanın; testi başlatın, 1 dk sonra bitirin. | — |
+| 10a | Uyku | Testi başlatın, **Başlat → Güç → Uyku**; 1 dk sonra bilgisayarı uyandırın, 1 dk bekleyin, bitirin. | Saatler |
 | 10b | Kapak (dizüstü) | Kapağı kapatın, 1 dk sonra açın. | Saatler |
-| 10c | Program kapatma | Program izlerken **pencereyi kapatın (X)**; 1 dk sonra programı yeniden açın, ön kontrol bitince Enter. | Saatler |
-| 11 | ARP önbelleği | Bilgisayar ile modem arasında bir **ağ anahtarı (switch / çoklu priz gibi ağ dağıtıcı)** ya da modeme bağlı ayrı bir **Wi-Fi erişim noktası** varsa: programı açın, **yalnız modemin** fişini 2 dk çekip takın (dağıtıcı/erişim noktası açık kalsın). Bilgisayarın bağlantı ışığı yanmaya devam etmeli. | Saatler; böyle bir düzen yoksa "yok" |
+| 10c | Program kapatma | Test sürerken saatin yanındaki simgeye sağ tıklayıp **Çıkış**; 1 dk sonra programı Başlat menüsünden yeniden açın. | Saatler |
+| 11 | ARP önbelleği | Bilgisayar ile modem arasında bir **ağ anahtarı (switch / çoklu priz gibi ağ dağıtıcı)** ya da modeme bağlı ayrı bir **Wi-Fi erişim noktası** varsa: testi başlatın, **yalnız modemin** fişini 2 dk çekip takın (dağıtıcı/erişim noktası açık kalsın). Bilgisayarın bağlantı ışığı yanmaya devam etmeli. | Saatler; böyle bir düzen yoksa "yok" |
 | 12 | Modem markası | Satır 1'i **farklı marka/tür modemlerde** (en az 3: ör. ADSL, VDSL, fiber) tekrarlayın. | Modem marka/modeli, hat türü |
 | 13 | E-imza | Testlerden sonra eimza sayfasından **normal bir imza** atın. | İmza sorunsuz mu |
 
 ## Sonuçları gönderme
 
-Masaüstündeki tüm `kolitakip_baglanti_….json` dosyalarını ve doldurduğunuz tabloyu Kolitakip'e gönderin.
-Sorun olursa ayrıntılı günlük şurada: `%LOCALAPPDATA%\KolitakipIMZA\baglanti_testi\teshis.log`
-(Başlat'a `%LOCALAPPDATA%\KolitakipIMZA\baglanti_testi` yazıp Enter).
+Raporlar test bitince otomatik olarak Kolitakip'e gider. Doldurduğunuz tabloyu (adım + saat) Kolitakip'e iletin.
+Programın kendi kopyası da bilgisayarda durur (son 20 test): Başlat'a
+`%LOCALAPPDATA%\KolitakipIMZA\baglanti_testi\raporlar` yazıp Enter.
 
 ---
 

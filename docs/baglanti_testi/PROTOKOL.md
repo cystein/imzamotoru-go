@@ -401,13 +401,6 @@ Uzaktan (latest.json, eski exe bilinmeyen alanı yok sayar):
 günlüğü (dönen dosya). Tepsi menüsü: "Tanı dosyalarını kopyala" → bu klasörü zip'leyip masaüstüne koyar.
 Kullanıcı adı / SSID / tam MAC içermez.
 
-## 11.1 Saha teşhis aracı
-
-`KolitakipIMZA-teshis.exe` (konsollu derleme, `TESHIS=1 ./build_windows.sh`): çift tıklanınca gerçek Windows
-gözlemcisiyle bir test başlatır, olayları ekrana yazar, Enter'la bitirir, raporu (sunucuya göndermeden)
-masaüstüne kaydeder. Kurulu KolitakipIMZA'ya ve porta dokunmaz. Kullanım: `docs/baglanti_testi/SAHA_TEST_KILAVUZU.md`.
-Aynı ikili, adı ne olursa olsun `--teshis` argümanıyla da bu moda girer.
-
 ## 11.2 Windows gözlemcisinin ayrıntıları (DOĞRULANMADI — saha testi bekleniyor)
 
 - Yol: `GetBestRoute` (IPv4). Arayüzler: `GetAdaptersAddresses` + `GetIfEntry2Ex` (AdminStatus, MediaConnectState),
