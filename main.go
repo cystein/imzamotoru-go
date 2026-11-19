@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -128,6 +129,15 @@ var jobQueue = make(chan CardJob, 100)
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--simule" || os.Args[1] == "-simule") {
 		simuleCalistir(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "--teshis" || os.Args[1] == "-teshis") {
+		teshisCalistir(os.Args[2:])
+		return
+	}
+	// Saha test exe'si (KolitakipIMZA-teshis.exe) çift tıklanınca doğrudan teşhis moduna girer.
+	if strings.Contains(strings.ToLower(filepath.Base(os.Args[0])), "teshis") {
+		teshisCalistir(os.Args[1:])
 		return
 	}
 	btBaslatGercek()

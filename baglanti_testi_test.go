@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"encoding/base64"
 	"encoding/hex"
@@ -281,5 +282,40 @@ func TestImzaKaynagiAyrimi(t *testing.T) {
 	}
 	if imzaKaynaklari["https://sgkkolitakip.web.tr"] {
 		t.Fatal("eczane sitesi imza başlatabilmemeli")
+	}
+}
+
+// Sahte UPnP IGD: aygıt açıklaması (iç içe WANDevice → WANConnectionDevice) + SOAP yanıtları.
+func TestUPnPOkuma(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/igd.xml":
+			w.Write([]byte(`<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><device>
+<deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>
+<deviceList><device><deviceType>urn:schemas-upnp-org:device:WANDevice:1</deviceType>
+<deviceList><device><deviceType>urn:schemas-upnp-org:device:WANConnectionDevice:1</deviceType>
+<serviceList><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>
+<controlURL>/ctl/IPConn</controlURL></service></serviceList></device></deviceList></device></deviceList></device></root>`))
+		case r.URL.Path == "/ctl/IPConn" && strings.Contains(r.Header.Get("SOAPAction"), "GetStatusInfo"):
+			w.Write([]byte(`<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetStatusInfoResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"><NewConnectionStatus>Connected</NewConnectionStatus><NewLastConnectionError>ERROR_NONE</NewLastConnectionError><NewUptime>4242</NewUptime></u:GetStatusInfoResponse></s:Body></s:Envelope>`))
+		case r.URL.Path == "/ctl/IPConn" && strings.Contains(r.Header.Get("SOAPAction"), "GetExternalIPAddress"):
+			w.Write([]byte(`<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetExternalIPAddressResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"><NewExternalIPAddress>81.214.10.20</NewExternalIPAddress></u:GetExternalIPAddressResponse></s:Body></s:Envelope>`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	igd, err := upnpAciklamaOku(ctx, srv.URL+"/igd.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := igd.oku(ctx)
+	if err != nil || v["uptime_s"] != float64(4242) || v["baglanti"] != "Connected" || v["dis_ip"] != "81.214.10.20" {
+		t.Fatalf("%v %v", v, err)
+	}
+	if _, err := upnpAciklamaOku(ctx, "http://8.8.8.8/igd.xml"); err == nil {
+		t.Fatal("yerel olmayan IGD adresi reddedilmeli")
 	}
 }

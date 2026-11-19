@@ -285,6 +285,29 @@ type btTest struct {
 
 	iptal  context.CancelFunc
 	bitirC chan string // test_bitir isteği (kaynak)
+
+	sonDuvar time.Time // saat atlaması denetimi (monotonik ile duvar saati karşılaştırması)
+	sonMono  int64
+}
+
+// saatDenetle: duvar saati monotonik saate göre 2 sn'den fazla kaydıysa olay üretir. Windows'ta
+// monotonik saat uykuyu saymayabilir; bu durumda uyku da burada "saat_atlamasi" olarak görünür.
+// Simülatörde (hızlandırılmış saat) çalışmaz. t.mu tutulmalı.
+func (t *btTest) saatDenetle() *btOlay {
+	if t.saat.hiz != 1 {
+		return nil
+	}
+	duvar, mono := time.Now().Round(0), t.saat.ms()
+	defer func() { t.sonDuvar, t.sonMono = duvar, mono }()
+	if t.sonDuvar.IsZero() {
+		return nil
+	}
+	fark := duvar.Sub(t.sonDuvar).Milliseconds() - (mono - t.sonMono)
+	if fark > 2000 || fark < -2000 {
+		o := t.olayEkle("saat_atlamasi", map[string]any{"fark_ms": fark})
+		return &o
+	}
+	return nil
 }
 
 const btAzamiOlay = 5000
@@ -992,6 +1015,7 @@ func (y *btYonetici) testiYurut(ctx context.Context, t *btTest, g btGozlemci, ce
 				continue
 			}
 			t.mu.Lock()
+			atlama := t.saatDenetle()
 			d := t.durumMesaji()
 			var goruntu *btAnlikGoruntu
 			if t.durumSira%5 == 1 { // ~5 sn'de bir: program kapanırsa yarım rapor için
@@ -1003,6 +1027,9 @@ func (y *btYonetici) testiYurut(ctx context.Context, t *btTest, g btGozlemci, ce
 				goruntu.URL = y.hedefler[t.RaporHedefi]
 				y.mu.Unlock()
 				y.gonderici.anlikGoruntuYaz(*goruntu)
+			}
+			if atlama != nil {
+				y.yayinla(t.ID, btOlayMesaji(t.ID, *atlama))
 			}
 			y.yayinla(t.ID, d)
 		case <-azami.C:

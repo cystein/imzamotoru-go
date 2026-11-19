@@ -24,9 +24,20 @@ jobs:
           "$(go env GOPATH)/bin/rsrc" -ico assets/icon.ico -o rsrc_windows_amd64.syso
 
       - name: Windows exe derle
+        env:
+          # Bağlantı testi HMAC anahtarı (PROTOKOL §8.2). Secret yoksa anahtar_no=0 ile derlenir.
+          BT_NO: ${{ secrets.BAGLANTI_TESTI_ANAHTAR_NO }}
+          BT_HEX: ${{ secrets.BAGLANTI_TESTI_HMAC_ANAHTARI }}
         run: |
+          BT_LDFLAGS=""
+          if [ -n "$BT_NO" ] && [ -n "$BT_HEX" ]; then
+            BT_LDFLAGS="-X main.btAnahtarNo=$BT_NO -X main.btAnahtarHex=$BT_HEX"
+            echo "Bağlantı testi anahtarı: anahtar_no=$BT_NO"
+          else
+            echo "::warning::Bağlantı testi anahtarı secret'ı yok — anahtar_no=0 ile derleniyor"
+          fi
           CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
-            go build -ldflags "-H=windowsgui" -o KolitakipIMZA.exe .
+            go build -ldflags "-H=windowsgui $BT_LDFLAGS" -o KolitakipIMZA.exe .
 
       - uses: actions/upload-artifact@v4
         with:

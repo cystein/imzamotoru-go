@@ -401,6 +401,32 @@ Uzaktan (latest.json, eski exe bilinmeyen alanı yok sayar):
 günlüğü (dönen dosya). Tepsi menüsü: "Tanı dosyalarını kopyala" → bu klasörü zip'leyip masaüstüne koyar.
 Kullanıcı adı / SSID / tam MAC içermez.
 
+## 11.1 Saha teşhis aracı
+
+`KolitakipIMZA-teshis.exe` (konsollu derleme, `TESHIS=1 ./build_windows.sh`): çift tıklanınca gerçek Windows
+gözlemcisiyle bir test başlatır, olayları ekrana yazar, Enter'la bitirir, raporu (sunucuya göndermeden)
+masaüstüne kaydeder. Kurulu KolitakipIMZA'ya ve porta dokunmaz. Kullanım: `docs/baglanti_testi/SAHA_TEST_KILAVUZU.md`.
+Aynı ikili, adı ne olursa olsun `--teshis` argümanıyla da bu moda girer.
+
+## 11.2 Windows gözlemcisinin ayrıntıları (DOĞRULANMADI — saha testi bekleniyor)
+
+- Yol: `GetBestRoute` (IPv4). Arayüzler: `GetAdaptersAddresses` + `GetIfEntry2Ex` (AdminStatus, MediaConnectState),
+  varsayılan yollar `GetIpForwardTable2`. DHCP kirası: `GetAdaptersInfo`.
+- ARP: `SendARP` (en çok bir istek uçuşta; uçuştayken gelen tur `atlandi`), öncesinde `GetIpNetEntry2` ile
+  komşu durumu (`onbellek_once`). TCP: `connect` + zaman aşımı; WSAECONNREFUSED → `reddedildi`.
+- Olaylar: `NotifyIpInterfaceChange`/`NotifyUnicastIpAddressChange` yalnız uyandırır; asıl fark her yoklama
+  turunda arayüz/yol tablosu yeniden okunarak bulunur (bildirim kaçsa bile). Kart düşme nedeni:
+  arayüz kayboldu/NotPresent/Admin kapalı → `devre_disi`; MediaConnectState bağlı değil/Oper down → `medya_baglantisi_yok`.
+- Uyku: `PowerRegisterSuspendResumeNotification` (pencere gerektirmez) → `uyku`/`uyanma`. Ayrıca motor her kalp
+  atışında duvar saatini monotonik saatle karşılaştırır; 2 sn'den fazla fark → `saat_atlamasi` (Windows'ta monotonik
+  saat uykuyu saymayabilir; uyku bu yolla da görünür).
+- Hotspot ipuçları: bilinen ağ geçidi adresleri, RNDIS/Apple açıklamaları, WWAN, ve ağ geçidinin MAC'i yerel yönetimli
+  (telefonların rastgele MAC'i) → `AG_GECIDI_RASTGELE_MAC`; `ag_gecidi.yerel_yonetimli_mac`.
+- TTL=2: `IcmpSendEcho` (ön kontrolde tek ölçüm). UPnP: SSDP M-SEARCH (test arayüzünün adresinden), yalnız
+  özel adresli IGD'ler; GetStatusInfo + GetExternalIPAddress.
+- Bilinen Windows davranışı: kapalı porta TCP bağlantısı RST sonrası yeniden denendiği için ~1–2 sn sürebilir;
+  kısa zaman aşımında `reddedildi` yerine `zaman_asimi` görünebilir.
+
 ## 12. Simülatör
 
 ```
