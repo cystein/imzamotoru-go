@@ -39,6 +39,8 @@ type btParametreler struct {
 	DurumAraligiMs           int64 `json:"durum_araligi_ms"`
 	OnKontrolYoklamaSayisi   int   `json:"on_kontrol_yoklama_sayisi"`
 	TCPPortlari              []int `json:"tcp_portlari"`
+	TCPAraligiMs             int64 `json:"tcp_araligi_ms"`
+	TCPZamanAsimiMs          int64 `json:"tcp_zaman_asimi_ms"`
 	UPnP                     bool  `json:"upnp"`
 	UPnPAraligiMs            int64 `json:"upnp_araligi_ms"`
 	TestAzamiSuresiMs        int64 `json:"test_azami_suresi_ms"`
@@ -62,7 +64,7 @@ func sinirla(v, en, cok int64) int64 {
 func btParametreleriUygula(ham json.RawMessage) btParametreler {
 	p := btParametreler{
 		YoklamaAraligiMs: 500, YoklamaZamanAsimiMs: 400, DurumAraligiMs: 1000, OnKontrolYoklamaSayisi: 6,
-		TCPPortlari: []int{80, 443, 53}, UPnP: true, UPnPAraligiMs: 5000, TestAzamiSuresiMs: 900000,
+		TCPPortlari: []int{80, 443, 53}, TCPAraligiMs: 2000, TCPZamanAsimiMs: 1500, UPnP: true, UPnPAraligiMs: 5000, TestAzamiSuresiMs: 900000,
 		SonIzlemeSuresiMs: 60000, RaporYenidenDenemeSuresi: 900000,
 	}
 	var m map[string]json.RawMessage
@@ -83,6 +85,8 @@ func btParametreleriUygula(ham json.RawMessage) btParametreler {
 	var oky int64 = int64(p.OnKontrolYoklamaSayisi)
 	sayi("on_kontrol_yoklama_sayisi", &oky)
 	sayi("upnp_araligi_ms", &p.UPnPAraligiMs)
+	sayi("tcp_araligi_ms", &p.TCPAraligiMs)
+	sayi("tcp_zaman_asimi_ms", &p.TCPZamanAsimiMs)
 	sayi("test_azami_suresi_ms", &p.TestAzamiSuresiMs)
 	sayi("son_izleme_suresi_ms", &p.SonIzlemeSuresiMs)
 	sayi("rapor_yeniden_deneme_suresi_ms", &p.RaporYenidenDenemeSuresi)
@@ -110,6 +114,13 @@ func btParametreleriUygula(ham json.RawMessage) btParametreler {
 		p.YoklamaZamanAsimiMs = p.YoklamaAraligiMs
 	}
 	p.DurumAraligiMs = sinirla(p.DurumAraligiMs, 250, 5000)
+	// v2.0.1: TCP, ARP'den seyrek ve daha uzun zaman aşımıyla (saha: modem web/DNS portları sık
+	// yoklamada her ikinci bağlantıyı düşürüyordu → 400 gereksiz olay).
+	p.TCPAraligiMs = sinirla(p.TCPAraligiMs, p.YoklamaAraligiMs, 10000)
+	p.TCPZamanAsimiMs = sinirla(p.TCPZamanAsimiMs, 100, 5000)
+	if p.TCPZamanAsimiMs > p.TCPAraligiMs {
+		p.TCPZamanAsimiMs = p.TCPAraligiMs
+	}
 	p.OnKontrolYoklamaSayisi = int(sinirla(oky, 1, 50))
 	p.UPnPAraligiMs = sinirla(p.UPnPAraligiMs, 2000, 60000)
 	p.TestAzamiSuresiMs = sinirla(p.TestAzamiSuresiMs, 60000, 900000)
@@ -265,14 +276,13 @@ type btTest struct {
 	toplamKartKapali, toplamAgKayip int64
 	sonYoklamaMs                    int64
 	agHicKaybolmadi                 bool
-	sonOUI                          string
+	sonOUI, ilkOUI                  string
 	upnpUptime                      float64
 	upnpDisIP, upnpBaglanti         string
 	upnpBilgi                       map[string]any
 
-	arpRLE   []btYoklamaDizisi
-	tcpRLE   map[int][]btYoklamaDizisi
-	tcpPortV map[int]bool
+	arpRLE []btYoklamaDizisi
+	tcpRLE map[int][]btYoklamaDizisi
 
 	kesintiler []btKesinti
 	acikKes    *btKesinti
@@ -403,30 +413,39 @@ func (t *btTest) isle(g btGozlem) []btOlay {
 				}
 			}
 		}
-		tcpCanli := false
+		// TCP her turda yoklanmaz (tcp_araligi_ms); yoklanmayan turda son bilinen TCP durumu geçerli.
+		// v2.0.1: port başına olay yok (sahada gürültüydü) — yalnız birleşik TCP durumu (herhangi bir
+		// port canlı mı) değişince tcp_kayip/tcp_geri; port ayrıntısı yoklamalar.tcp'de.
 		portlar := make([]int, 0, len(g.TCP))
 		for port := range g.TCP {
 			portlar = append(portlar, port)
 		}
 		sort.Ints(portlar)
+		tcpCanli, tcpOlculdu := false, false
 		for _, port := range portlar {
 			s := g.TCP[port]
 			t.tcpRLE[port] = rleEkle(t.tcpRLE[port], ms, s, "")
-			canli := s == "acik" || s == "reddedildi"
-			tcpCanli = tcpCanli || canli
-			if onceki, ok := t.tcpPortV[port]; !ok || onceki != canli {
-				if ok {
-					if canli {
-						ekle("tcp_geri", map[string]any{"port": port})
-					} else {
-						ekle("tcp_kayip", map[string]any{"port": port})
-					}
-				}
-				t.tcpPortV[port] = canli
+			if s == "atlandi" {
+				continue
+			}
+			tcpOlculdu = true
+			tcpCanli = tcpCanli || s == "acik" || s == "reddedildi"
+		}
+		if tcpOlculdu && tcpCanli != t.tcpVar {
+			t.tcpVar = tcpCanli
+			if tcpCanli {
+				ekle("tcp_geri", nil)
+			} else {
+				ekle("tcp_kayip", nil)
 			}
 		}
-		t.tcpVar = tcpCanli
-		agVar := arpCevap || tcpCanli
+		// ARP bu gözlemde yoksa/atlandıysa son bilinen ARP durumu geçerli (v2.0.1: ARP ve TCP ayrı
+		// gözlemler olarak gelebiliyor; atlanan tur "kayıp" sayılmamalı).
+		arpDurum := arpCevap
+		if g.ARP == "" || g.ARP == "atlandi" {
+			arpDurum = t.arpVar
+		}
+		agVar := arpDurum || t.tcpVar
 		if agVar != t.agVar {
 			t.agVar = agVar
 			if !agVar {
@@ -438,7 +457,7 @@ func (t *btTest) isle(g btGozlem) []btOlay {
 				sure := ms - t.agKayipMs
 				t.toplamAgKayip += sure
 				kaynak := "tcp"
-				if arpCevap {
+				if arpDurum {
 					kaynak = "arp"
 				}
 				t.kesinti().AgGecidiGeri = i64(ms)
@@ -449,7 +468,11 @@ func (t *btTest) isle(g btGozlem) []btOlay {
 	case "mac":
 		oui, _ := g.Veri["oui"].(string)
 		if oui != "" && t.sonOUI != "" && oui != t.sonOUI {
-			ekle("ag_gecidi_mac_degisti", map[string]any{"onceki_oui": t.sonOUI, "yeni_oui": oui})
+			// Saha (2026-11-19): modem açılırken önyükleyicisi aynı IP'den yerel yönetimli bir MAC'le
+			// kısa süre cevap veriyor, sonra gerçek MAC'e dönüyor — yeniden başlatma kanıtı.
+			ekle("ag_gecidi_mac_degisti", map[string]any{"onceki_oui": t.sonOUI, "yeni_oui": oui,
+				"onceki_yerel_yonetimli": ouiYerelYonetimli(t.sonOUI), "yeni_yerel_yonetimli": ouiYerelYonetimli(oui),
+				"ilk_oui_ye_dondu": oui == t.ilkOUI})
 		}
 		if oui != "" {
 			t.sonOUI = oui
@@ -504,6 +527,16 @@ func (t *btTest) isle(g btGozlem) []btOlay {
 		ekle("ic_hata", g.Veri)
 	}
 	return yeni
+}
+
+// ouiYerelYonetimli: MAC'in ilk baytındaki 0x02 biti (yerel yönetimli; rastgele/önyükleyici MAC'leri).
+func ouiYerelYonetimli(oui string) bool {
+	var ilk byte
+	if len(oui) < 2 {
+		return false
+	}
+	fmt.Sscanf(oui[:2], "%02X", &ilk)
+	return ilk&0x02 != 0
 }
 
 func (t *btTest) sonCevapOncesi(ms int64) int64 {
@@ -889,7 +922,7 @@ func (y *btYonetici) testBasla(c btIstemci, m btIstek, cevap func(map[string]any
 		ID: m.TestID, Nonce: m.Nonce, BeklenenBaglanti: m.BeklenenBaglanti, RaporHedefi: m.RaporHedefi,
 		OlcumHedefi: m.OlcumHedefi, Istenen: m.Parametreler, P: btParametreleriUygula(m.Parametreler),
 		saat: yeniBtSaat(y.saatHizi), simulasyon: y.simulasyon, asama: "on_kontrol", raporTuru: "nihai",
-		tcpRLE: map[int][]btYoklamaDizisi{}, tcpPortV: map[int]bool{}, agHicKaybolmadi: true,
+		tcpRLE: map[int][]btYoklamaDizisi{}, agHicKaybolmadi: true,
 		iptal: iptal, bitirC: make(chan string, 2),
 	}
 	y.aktif = t
@@ -931,9 +964,10 @@ func (y *btYonetici) testiYurut(ctx context.Context, t *btTest, g btGozlemci, ce
 	ok.Bilgi["olcum_zamani"] = map[string]any{"mono_ms": t.saat.ms(), "duvar": t.saat.duvar(t.saat.ms())}
 	ok.Bilgi["beklenen_baglanti"] = t.BeklenenBaglanti
 	t.onKontrol = ok
-	t.kartAcik, t.agVar, t.arpVar = ok.KartAcik, ok.AgVar, ok.AgVar
+	t.kartAcik, t.agVar, t.arpVar, t.tcpVar = ok.KartAcik, ok.AgVar, ok.AgVar, ok.AgVar
 	if oui, _ := ok.Bilgi["ag_gecidi"].(map[string]any); oui != nil {
 		t.sonOUI, _ = oui["oui"].(string)
+		t.ilkOUI = t.sonOUI
 	}
 	t.asama = "izleme"
 	o := t.olayEkle("izleme_basladi", map[string]any{"kart_acik": ok.KartAcik, "ag_gecidi_var": ok.AgVar})

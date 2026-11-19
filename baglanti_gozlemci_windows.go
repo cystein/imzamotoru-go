@@ -299,9 +299,22 @@ var hotspotAgGecitleri = map[string]bool{"192.168.43.1": true, "172.20.10.1": tr
 // Yoklayıcı: ARP + TCP, her biri en çok bir uçuşta; takılan yoklama sonrakini bekletmez.
 // ---------------------------------------------------------------------------
 
+// v2.0.1: ARP için aynı anda en çok 8 istek. SendARP cevapsız ağ geçidinde ~3–4 sn takılıyor;
+// tek istek sınırıyla (2.0.0) modem kapalıyken ölçüm 4–5 sn'de bire düşüyor, "geri geldi" anı
+// ±4 sn kayıyordu (saha raporu 2026-11-19). Her takılı istek bir OS iş parçacığı tutar; 8 makul.
+const azamiEsZamanliARP = 8
+
 type yoklayici struct {
-	arpUcusta atomic.Bool
+	arpSem    chan struct{}
 	tcpUcusta sync.Map // port → *atomic.Bool
+	sonTCP    time.Time
+}
+
+func (y *yoklayici) sem() chan struct{} {
+	if y.arpSem == nil {
+		y.arpSem = make(chan struct{}, azamiEsZamanliARP)
+	}
+	return y.arpSem
 }
 
 type arpSonucu struct {
@@ -312,12 +325,14 @@ type arpSonucu struct {
 // arp: zaman aşımı içinde SendARP sonucu; uçuşta bir istek varsa "atlandi".
 func (y *yoklayici) arp(ifidx uint32, gw net.IP, zaman time.Duration) arpSonucu {
 	onb, _ := komsuDurumu(ifidx, gw)
-	if !y.arpUcusta.CompareAndSwap(false, true) {
+	select {
+	case y.sem() <- struct{}{}:
+	default:
 		return arpSonucu{sonuc: "atlandi", onbellek: onb}
 	}
 	c := make(chan arpSonucu, 1)
 	go func() {
-		defer y.arpUcusta.Store(false)
+		defer func() { <-y.sem() }()
 		bas := time.Now()
 		mac := make([]byte, 6)
 		e := C.bt_send_arp(ipv4Sayi(gw), (*C.uchar)(unsafe.Pointer(&mac[0])))
@@ -366,9 +381,9 @@ func (y *yoklayici) tcp(gw net.IP, port int, zaman time.Duration) string {
 	return "hata"
 }
 
-// tur: bir yoklama turu (ARP ve TCP eşzamanlı).
-func (y *yoklayici) tur(ifidx uint32, gw net.IP, p btParametreler) (arpSonucu, map[int]string) {
-	zaman := time.Duration(p.YoklamaZamanAsimiMs) * time.Millisecond
+// tcpTuru: tüm TCP portlarını eşzamanlı yoklar.
+func (y *yoklayici) tcpTuru(gw net.IP, p btParametreler) map[int]string {
+	tcpZaman := time.Duration(p.TCPZamanAsimiMs) * time.Millisecond
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	tcp := map[int]string{}
@@ -376,7 +391,28 @@ func (y *yoklayici) tur(ifidx uint32, gw net.IP, p btParametreler) (arpSonucu, m
 		wg.Add(1)
 		go func(port int) {
 			defer wg.Done()
-			s := y.tcp(gw, port, zaman)
+			s := y.tcp(gw, port, tcpZaman)
+			mu.Lock()
+			tcp[port] = s
+			mu.Unlock()
+		}(port)
+	}
+	wg.Wait()
+	return tcp
+}
+
+// tur: ön kontrol için bir yoklama turu (ARP + tüm TCP portları, eşzamanlı).
+func (y *yoklayici) tur(ifidx uint32, gw net.IP, p btParametreler) (arpSonucu, map[int]string) {
+	zaman := time.Duration(p.YoklamaZamanAsimiMs) * time.Millisecond
+	tcpZaman := time.Duration(p.TCPZamanAsimiMs) * time.Millisecond
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	tcp := map[int]string{}
+	for _, port := range p.TCPPortlari {
+		wg.Add(1)
+		go func(port int) {
+			defer wg.Done()
+			s := y.tcp(gw, port, tcpZaman)
 			mu.Lock()
 			tcp[port] = s
 			mu.Unlock()
@@ -773,8 +809,19 @@ func (g *winGozlemci) Izle(ctx context.Context, p btParametreler, cikis chan<- b
 				}
 				continue
 			}
+			// v2.0.1: ARP ve TCP ayrı gözlemler — TCP'nin uzun zaman aşımı ARP sonucunu geciktirmesin.
+			if time.Since(g.y.sonTCP) >= time.Duration(p.TCPAraligiMs)*time.Millisecond-50*time.Millisecond && len(p.TCPPortlari) > 0 {
+				g.y.sonTCP = time.Now()
+				go func() {
+					tcp := g.y.tcpTuru(gw, p)
+					select {
+					case sonuclar <- btGozlem{Tur: "yoklama", TCP: tcp}:
+					case <-ctx.Done():
+					}
+				}()
+			}
 			go func() {
-				a, tcp := g.y.tur(g.testNo, gw, p)
+				a := g.y.arp(g.testNo, gw, time.Duration(p.YoklamaZamanAsimiMs)*time.Millisecond)
 				if a.oui != "" { // motor yalnız değişince olay üretir
 					select {
 					case sonuclar <- btGozlem{Tur: "mac", Veri: map[string]any{"oui": a.oui}}:
@@ -783,7 +830,7 @@ func (g *winGozlemci) Izle(ctx context.Context, p btParametreler, cikis chan<- b
 					}
 				}
 				select {
-				case sonuclar <- btGozlem{Tur: "yoklama", ARP: a.sonuc, Onbellek: a.onbellek, TCP: tcp}:
+				case sonuclar <- btGozlem{Tur: "yoklama", ARP: a.sonuc, Onbellek: a.onbellek}:
 				case <-ctx.Done():
 				}
 			}()

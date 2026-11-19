@@ -319,3 +319,50 @@ func TestUPnPOkuma(t *testing.T) {
 		t.Fatal("yerel olmayan IGD adresi reddedilmeli")
 	}
 }
+
+// Saha raporu (2026-11-19, SGK deneme eczanesi) örüntüsü: modem portları her TCP turunda gidip
+// geliyor, ARP sağlam; ARP "atlandi" turu kayıp sayılmamalı; önyükleyici MAC'i geçici.
+func TestSahaOruntusu(t *testing.T) {
+	tt := &btTest{ID: "t_saha", P: btParametreleriUygula(nil), saat: yeniBtSaat(1), asama: "izleme",
+		tcpRLE: map[int][]btYoklamaDizisi{}, agHicKaybolmadi: true, kartAcik: true, agVar: true, arpVar: true, tcpVar: true,
+		sonOUI: "7C:77:16", ilkOUI: "7C:77:16"}
+	sayac := map[string]int{}
+	isle := func(g btGozlem) {
+		for _, o := range tt.isle(g) {
+			sayac[o.Kod]++
+		}
+	}
+	for i := 0; i < 100; i++ { // modem açık: ARP cevap, TCP her turda dönüşümlü
+		isle(btGozlem{Tur: "yoklama", ARP: "cevap", Onbellek: "reachable"})
+		if i%4 == 0 {
+			s := map[bool]string{true: "acik", false: "zaman_asimi"}[i%8 == 0]
+			isle(btGozlem{Tur: "yoklama", TCP: map[int]string{80: s, 443: s, 53: s}})
+		}
+		if i%10 == 5 {
+			isle(btGozlem{Tur: "yoklama", ARP: "atlandi", Onbellek: "reachable"})
+		}
+	}
+	if sayac["ag_gecidi_kayip"] != 0 {
+		t.Fatalf("ARP sağlamken ağ geçidi kaybı üretildi: %v", sayac)
+	}
+	if sayac["tcp_kayip"] > 13 || sayac["tcp_geri"] > 13 {
+		t.Fatalf("TCP olayları port başına değil birleşik olmalı: %v", sayac)
+	}
+	// Modem kapanır (ARP + TCP yok), önyükleyici MAC'iyle döner, sonra gerçek MAC.
+	isle(btGozlem{Tur: "yoklama", ARP: "zaman_asimi", Onbellek: "reachable", TCP: map[int]string{80: "zaman_asimi"}})
+	isle(btGozlem{Tur: "mac", Veri: map[string]any{"oui": "7E:70:16"}})
+	isle(btGozlem{Tur: "yoklama", ARP: "cevap"})
+	isle(btGozlem{Tur: "mac", Veri: map[string]any{"oui": "7C:77:16"}})
+	if sayac["ag_gecidi_kayip"] != 1 || sayac["ag_gecidi_geri"] != 1 || sayac["ag_gecidi_mac_degisti"] != 2 {
+		t.Fatalf("%v", sayac)
+	}
+	son := tt.olaylar[len(tt.olaylar)-1]
+	if son.Kod != "ag_gecidi_mac_degisti" || son.Veri["ilk_oui_ye_dondu"] != true {
+		t.Fatalf("son olay: %+v", son)
+	}
+	for _, o := range tt.olaylar {
+		if o.Kod == "ag_gecidi_mac_degisti" && o.Veri["yeni_oui"] == "7E:70:16" && o.Veri["yeni_yerel_yonetimli"] != true {
+			t.Fatalf("önyükleyici MAC'i yerel yönetimli işaretlenmeli: %+v", o)
+		}
+	}
+}

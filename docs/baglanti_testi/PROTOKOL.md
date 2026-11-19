@@ -100,6 +100,8 @@ istemezse sayfa `test_iptal` gönderir. Aynı anda ikinci `test_basla` → `TEST
 | `durum_araligi_ms` | 1000 | 250–5000 | sayfaya `durum` (kalp atışı) aralığı |
 | `on_kontrol_yoklama_sayisi` | 6 | 1–50 | ön kontrolde ardışık yoklama sayısı |
 | `tcp_portlari` | [80,443,53] | ≤5 port | ağ geçidine TCP bağlantı denemesi portları; `[]` = kapalı |
+| `tcp_araligi_ms` | 2000 | yoklama_araligi–10000 | (2.0.1) TCP yoklama aralığı; ARP her `yoklama_araligi_ms`'de |
+| `tcp_zaman_asimi_ms` | 1500 | 100–5000 (≤ tcp_araligi) | (2.0.1) tek TCP bağlantı denemesinin zaman aşımı |
 | `upnp` | true | — | UPnP IGD okuma denensin mi |
 | `upnp_araligi_ms` | 5000 | 2000–60000 | UPnP okuma aralığı |
 | `test_azami_suresi_ms` | 900000 | 60000–900000 | izleme aşamasının azami ömrü (15 dk sert sınır) |
@@ -168,7 +170,7 @@ Exe bunları yalnız **raporlar**; teste devam kararı sunucunundur.
 
 - **ARP:** her `yoklama_araligi_ms`'de bir, zaman aşımı `yoklama_zaman_asimi_ms`, ayrı goroutine + deadline
   (takılan yoklama sonrakini bekletmez; üst üste binen yoklama `atlandi` sayılır).
-- **TCP:** aynı aralıkla, `tcp_portlari`'ndaki her porta kısa `connect`. Sonuç: `acik` (bağlandı), `reddedildi`
+- **TCP:** (2.0.1) `tcp_araligi_ms` aralığıyla ve `tcp_zaman_asimi_ms` zaman aşımıyla; ARP'den ayrı gözlem olarak gelir (TCP'nin uzun zaman aşımı ARP'yi geciktirmez). 2.0.0'da ARP ile aynı aralıktaydı; `tcp_portlari`'ndaki her porta kısa `connect`. Sonuç: `acik` (bağlandı), `reddedildi`
   (RST — cihaz CANLI demektir), `zaman_asimi`, `hata`. **ARP ve TCP ayrı raporlanır**; birleştirilmiş tek bir
   "ağ geçidi var/yok" yalnız canlı ekran içindir (§5.3) ve raporda ham sonuçlar ayrıca bulunur.
 - **ARP önbelleği:** Windows'ta yönetici hakkı olmadan önbellek kaydını silmek mümkün değil; `SendARP`/
@@ -194,9 +196,9 @@ Olaylar gerçekleştikçe sayfaya itilir ve rapora girer:
 | `ipv4_kayboldu` / `ipv4_geldi` | test arayüzünün IPv4 adresi silindi/eklendi (DHCP) | `adres` (yalnız yerel özel adres) |
 | `ag_gecidi_kayip` | birleşik yoklama ilk kez cevapsız (ARP yok **ve** TCP yok) | `son_cevap_mono_ms` |
 | `ag_gecidi_geri` | kayıptan sonra ilk cevap | `kaynak` (`arp`/`tcp`), `kayip_suresi_ms` |
-| `arp_kayip` / `arp_geri` | yalnız ARP'nin geçişleri | — |
-| `tcp_kayip` / `tcp_geri` | yalnız TCP'nin geçişleri | `port` |
-| `ag_gecidi_mac_degisti` | ağ geçidi OUI değişti (başka cihaz) | `onceki_oui`, `yeni_oui` |
+| `arp_kayip` / `arp_geri` | yalnız ARP'nin geçişleri (atlanan tur durum değiştirmez) | — |
+| `tcp_kayip` / `tcp_geri` | (2.0.1) birleşik TCP durumu değişti (herhangi bir port `acik`/`reddedildi` mi); port başına olay YOK — 2.0.0'da `port` alanıyla port başınaydı, sahada gürültüydü | — |
+| `ag_gecidi_mac_degisti` | ağ geçidi OUI değişti. Sahada modem önyükleyicisi aynı IP'den yerel yönetimli MAC'le geçici cevap verip gerçek MAC'e dönüyor (yeniden başlatma kanıtı); kalıcı farklı OUI = başka cihaz | `onceki_oui`, `yeni_oui`, (2.0.1) `onceki_yerel_yonetimli`, `yeni_yerel_yonetimli`, `ilk_oui_ye_dondu` |
 | `yol_degisti` | `olcum_hedefi`'ne yol başka arayüz/ağ geçidine döndü | `onceki`, `yeni` |
 | `arayuz_degisti` | başka bir arayüz up/down oldu ya da varsayılan yolu değişti | `arayuz_no`, `tur`, `durum` |
 | `vpn_belirdi` / `vpn_kayboldu` | VPN/TAP/tünel arayüzü up/down | `aciklama` |
@@ -419,6 +421,17 @@ Kullanıcı adı / SSID / tam MAC içermez.
   özel adresli IGD'ler; GetStatusInfo + GetExternalIPAddress.
 - Bilinen Windows davranışı: kapalı porta TCP bağlantısı RST sonrası yeniden denendiği için ~1–2 sn sürebilir;
   kısa zaman aşımında `reddedildi` yerine `zaman_asimi` görünebilir.
+
+## 11.3 Saha bulguları (2026-11-19, ilk gerçek test, Windows 11, ethernet, Türk Telekom modemi)
+
+- ARP önbelleği: modem kapandığı an komşu durumu `reachable` iken SendARP **önbellekten cevap vermedi**
+  (hemen `zaman_asimi`). Test matrisi satır 11 için ilk olumlu veri (tek modem; başka modemlerde de bakılmalı).
+- Modem açılışı: önce önyükleyici `7E:70:16` (yerel yönetimli) ile cevap verdi, ~10 sn sonra yine sustu, ardından
+  gerçek MAC `7C:77:16` ile döndü; toplam 4 ham kesinti. Kart (ethernet bağlantısı) hiç düşmedi.
+- TCP 80/443/53: modem açıkken her yoklamada bir cevap verip bir vermedi (bağlantı sınırlaması) → 2.0.1'de TCP
+  seyrekleştirildi ve olaylar birleştirildi.
+- 2.0.0'da ARP tek istekle sınırlıydı; modem kapalıyken SendARP ~4 sn takıldığı için ölçüm 4–5 sn'de bire düşüyordu.
+  2.0.1'de aynı anda 8 ARP isteği.
 
 ## 12. Simülatör
 
