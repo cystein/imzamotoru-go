@@ -69,7 +69,11 @@ if [ "${ADAY:-0}" = "1" ]; then
 	ON_SURUM="--prerelease"
 	echo "AŞAMALI YAYIN: latest.json'a dokunulmuyor -> $HEDEF_JSON"
 fi
-go run ./tools/sign_release "$PRIVATE_KEY" KolitakipIMZA.exe "$VERSION" "$DOWNLOAD_URL" "$HEDEF_JSON" ${MIN_SURUM:+"$MIN_SURUM"}
+# Önce geçici dosyaya: latest(-aday).json, exe.gz GitHub'a YÜKLENDİKTEN SONRA yerine konur. Aksi
+# halde aradaki sürede kontrol yapan istemci yeni sürümü görüp indiremez (404) — zorunlu sürümde
+# hem imza kilitlenir hem 6 saat sonraki denemeye kalınırdı.
+GECICI_JSON="$HEDEF_JSON.yeni"
+go run ./tools/sign_release "$PRIVATE_KEY" KolitakipIMZA.exe "$VERSION" "$DOWNLOAD_URL" "$GECICI_JSON" ${MIN_SURUM:+"$MIN_SURUM"}
 
 gzip -9 -f -c KolitakipIMZA.exe > KolitakipIMZA.exe.gz
 
@@ -82,6 +86,13 @@ else
 	gh release create "$TAG" KolitakipIMZA.exe.gz --repo "$REPO" $ON_SURUM \
 		--title "Kolitakip Asistan $TAG" --notes "Self-update kanalı yayını."
 fi
+
+# Yüklenen dosya gerçekten indirilebiliyor mu? Ancak o zaman yayına al.
+if ! curl -fsSL -o /dev/null "$DOWNLOAD_URL"; then
+	echo "HATA: $DOWNLOAD_URL indirilemiyor — $HEDEF_JSON DEĞİŞTİRİLMEDİ ($GECICI_JSON bırakıldı)."
+	exit 1
+fi
+mv "$GECICI_JSON" "$HEDEF_JSON"
 
 echo ""
 echo "OK -> v$VERSION imzalanıp self-update kanalına yayınlandı."
