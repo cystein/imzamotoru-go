@@ -341,7 +341,9 @@ User-Agent: KolitakipIMZA/1.6.0 (baglanti_testi; protokol 1)
   (`main.btAnahtarHex`, `main.btAnahtarNo`) ile enjekte edilir.
 - **`anahtar_no: 0`** = herkese açık test anahtarı `kolitakip-baglanti-testi-simulator-anahtari` (UTF-8 baytları).
   Simülatör ve anahtar enjekte edilmemiş derleme bunu kullanır. **Canlı uç `0`'ı her zaman reddeder.**
-- Güncel durum: gerçek anahtar henüz üretilmedi (kullanıcı onayı bekleniyor) → derlemeler `anahtar_no: 0`.
+- Güncel durum (2026-11-19, kullanıcı kararı): gerçek anahtarı **Kolitakip oturumu üretir**, sunucuya kendisi koyar,
+  kullanıcıya verir; kullanıcı GitHub secret'larına ekler. Eklenene kadar derlemeler `anahtar_no: 0`. Kod imzalama
+  sertifikası şimdilik yok. Gerçek donanım doğrulaması kullanıcının güvendiği bir eczanede yapılacak.
 - Test vektörü: `HMAC-SHA256(anahtar="anahtar", "nonce123" || 0x0A || '{"a":1}')` =
   `21c56838b9811d13dd75f2a3c3d588c59230bf3a3a1c82cb39f61b4f30ddd345`
 - Gövde base64'tür: .103'teki ModSecurity ham dosya yolu/komut benzeri metinlere 403 veriyor (EL_KITABI §9.16).
