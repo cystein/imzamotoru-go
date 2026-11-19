@@ -1815,7 +1815,7 @@ func signPAdESAndSync(s *surucuSeti, pin, certID, dokumNo, token string) error {
 		// (ör. "bu 5 evrak da 1.2.1 ile imzalanmış, o sürümde bilinen X hatası vardı" diyebilmek).
 		"imza_motoru_surumu": APP_VERSION,
 		// Kart/sürücü eşleşmesi (sunucu yalnız kayda yazar, imzayı etkilemez). v1.5.1: BASE64.
-		// v1.5.0 düz JSON gönderiyordu; içindeki "C:\Windows\System32\akisp11.dll" yolu .103'teki
+		// v1.5.0 düz JSON gönderiyordu; içindeki "C:\Windows\System32\akisp11.dll" yolu proxy'deki
 		// ModSecurity'nin işletim sistemi dosyası kuralına takıldı ve save_signed 403 aldı — imza
 		// kaydedilemedi (EL_KITABI §9.16). Proxy'den geçen gövdeye asla ham dosya yolu koyma.
 		"kart_bilgisi_b64": base64.StdEncoding.EncodeToString([]byte(kartBilgisiJSON(kartTarama, k.surucu, s.bilgi(k.surucu), k))),
