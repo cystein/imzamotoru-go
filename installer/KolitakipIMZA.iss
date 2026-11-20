@@ -16,7 +16,7 @@
 ; bilerek DEĞİŞMEDİ: eski kurulumların üzerine kurulum ve otomatik güncelleme bu adlara bağlı.
 #define MyAppName "KolitakipIMZA"
 #define MyAppDisplayName "Kolitakip Asistan"
-#define MyAppVersion "2.0.2"
+#define MyAppVersion "2.0.3"
 #define MyAppPublisher "Kolitakip"
 #define MyAppURL "https://eimza.sgkkolitakip.web.tr"
 #define MyAppExeName "KolitakipIMZA.exe"
@@ -25,6 +25,7 @@
 AppId={{A4F72625-6C55-4645-B0B3-45AC71C607C9}
 AppName={#MyAppDisplayName}
 AppVerName={#MyAppDisplayName} {#MyAppVersion}
+UninstallDisplayName={#MyAppDisplayName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
@@ -33,7 +34,9 @@ DefaultGroupName={#MyAppDisplayName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64
-OutputBaseFilename=KolitakipIMZA-Setup
+; v2.0.3: Setup dosyasının adı KolitakipAsistan-Setup.exe. GitHub Release'e eski adla
+; (KolitakipIMZA-Setup.exe) da bir kopya yüklenir ki eski indirme bağlantıları çalışmaya devam etsin.
+OutputBaseFilename=KolitakipAsistan-Setup
 OutputDir=.\output
 Compression=lzma
 SolidCompression=yes

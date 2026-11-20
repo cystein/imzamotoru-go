@@ -68,8 +68,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: KolitakipIMZA-Setup
-          path: installer/output/KolitakipIMZA-Setup.exe
+          name: KolitakipAsistan-Setup
+          path: installer/output/KolitakipAsistan-Setup.exe
 
       # 3. Adım: Installer'ı sunucumuz yerine GitHub Releases üzerinden dağıtıyoruz —
       # GitHub'ın kendi CDN'i bizim sunucumuzdan çok daha hızlı ve upload bant genişliğimizi
@@ -93,10 +93,14 @@ jobs:
         run: |
           TAG="v${{ steps.surum.outputs.version }}"
           REPO="${{ github.repository }}"
-          ASSET="installer/output/KolitakipIMZA-Setup.exe"
+          # v2.0.3: yeni ad + eski adla kopya (eski ".../latest/download/KolitakipIMZA-Setup.exe"
+          # bağlantıları — Kolitakip sayfası, eski kılavuzlar — çalışmaya devam etsin).
+          ASSET="installer/output/KolitakipAsistan-Setup.exe"
+          ESKI="installer/output/KolitakipIMZA-Setup.exe"
+          cp "$ASSET" "$ESKI"
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ASSET" --repo "$REPO" --clobber
+            gh release upload "$TAG" "$ASSET" "$ESKI" --repo "$REPO" --clobber
           else
-            gh release create "$TAG" "$ASSET" --repo "$REPO" \
+            gh release create "$TAG" "$ASSET" "$ESKI" --repo "$REPO" \
               --title "Kolitakip Asistan $TAG" --notes "Otomatik CI derlemesi."
           fi

@@ -13,8 +13,8 @@ if [ "$ADAY_SURUM" != "$VERSION" ]; then
 	echo "HATA: latest-aday.json $ADAY_SURUM sürümünde, $VERSION değil."
 	exit 1
 fi
-gh release view "v$VERSION" --repo "$REPO" --json assets -q '.assets[].name' | grep -qx 'KolitakipIMZA-Setup.exe' || {
-	echo "HATA: v$VERSION release'inde KolitakipIMZA-Setup.exe yok — önce installer workflow'unu çalıştırın."; exit 1; }
+gh release view "v$VERSION" --repo "$REPO" --json assets -q '.assets[].name' | grep -qx 'KolitakipAsistan-Setup.exe' || {
+	echo "HATA: v$VERSION release'inde KolitakipAsistan-Setup.exe yok — önce installer workflow'unu çalıştırın."; exit 1; }
 cp "$DEST/latest-aday.json" "$DEST/latest.json"
 gh release edit "v$VERSION" --repo "$REPO" --prerelease=false --latest
 echo "OK -> v$VERSION herkese açıldı (latest.json güncellendi, release 'latest')."

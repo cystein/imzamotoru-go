@@ -161,6 +161,7 @@ func onTrayReady() {
 	}
 
 	systray.SetTooltip(fmt.Sprintf("%s çalışıyor (v%s)", APP_GORUNEN_AD, APP_VERSION))
+	go kurulumKaydiniGuncelle() // v2.0.3: Yüklü uygulamalar listesi ve Başlat menüsünde güncel ad/sürüm
 
 	// mDurum paket seviyesinde tanımlı (notify_windows.go) — burada sadece atanıyor, böylece
 	// bildir() farklı bir goroutine'den (cardWorker, update kontrolü) tepsi başlığını/tooltip'i
