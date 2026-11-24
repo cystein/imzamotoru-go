@@ -14,7 +14,7 @@ var vpnKelimeleri = []string{"tap-", "tap ", "tun ", "wintun", "wireguard", "vpn
 
 var tunelHaric = []string{"teredo", "ip-https", "6to4", "isatap", "loopback"}
 
-var sanalKelimeleri = []string{"hyper-v", "vethernet", "virtualbox", "vmware", "virtual adapter", "docker", "wsl"}
+var sanalKelimeleri = []string{"hyper-v", "vethernet", "virtualbox", "vmware", "virtual adapter", "docker", "wsl", "npcap", "loopback", "wi-fi direct", "bluetooth"}
 
 func icerir(s string, liste []string) bool {
 	s = strings.ToLower(s)
@@ -49,3 +49,17 @@ type arpSonucu struct {
 	sonuc, onbellek, oui string
 	sureMs               int64
 }
+
+// apipasiz: 169.254.x.x (APIPA — DHCP alamamış) adreslerini çıkarır; "a.b.c.d/n" biçimi.
+func apipasiz(l []string) []string {
+	out := []string{}
+	for _, a := range l {
+		if !strings.HasPrefix(a, "169.254.") {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// fizikselTur: sayıma giren fiziksel bağlantı türleri (VPN, sanal, köprü, loopback hariç).
+func fizikselTur(tur string) bool { return tur == "ethernet" || tur == "wifi" || tur == "mobil" }

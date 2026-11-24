@@ -151,10 +151,40 @@ Exe bunları yalnız **raporlar**; teste devam kararı sunucunundur.
 | `ARP_DESTEKLENMIYOR` | test arayüzü ARP kullanmıyor (WWAN/PPP/tünel); yalnız TCP yoklaması raporlanır |
 | `VPN_VARSAYILAN_YOLDA` | varsayılan yol bir VPN/TAP/tünel arayüzünden geçiyor |
 | `VPN_ARAYUZU_VAR` | yukarıda bir VPN/TAP/tünel arayüzü var (yol üzerinde olmasa da) |
-| `COKLU_AKTIF_ARAYUZ` | varsayılan yolu olan birden fazla "up" arayüz var (ör. Wi-Fi + kablo) |
+| `COKLU_AKTIF_ARAYUZ` | (2.1.0) IPv4 almış birden fazla fiziksel bağlantı var (ör. Wi-Fi + kablo), varsayılan yolda olmasa da |
 | `SANAL_ARAYUZ` | test arayüzü sanal (Hyper-V, VirtualBox vb.) |
 | `HOTSPOT_IPUCU` | `hotspot_ipuclari` boş değil (beklenen_baglanti ile çelişip çelişmediğine sunucu bakar) |
 | `IPV4_YOK` | test arayüzünde IPv4 yok |
+| `ARAYUZ_UYUSMAZ` | (2.1.0) `beklenen_arayuz` ile bulunan bağlantı türü farklı |
+
+### 4.5 Bağlantı seçimi, çift bağlantı, engel mesajları, ön kontrol-yalnız (v2.1.0)
+
+- `test_basla` yeni isteğe bağlı alan **`beklenen_arayuz`**: `ethernet` | `wifi` | `hotspot` (sayfada eczacının seçimi;
+  hat türü olan `beklenen_baglanti` ile karıştırılmasın). Exe bulunan türü `on_kontrol.bulunan_arayuz`'a yazar
+  (hotspot ipucu varsa ya da arayüz mobilse `hotspot`, yoksa `test_arayuzu.tur`). Seçim verilmiş ve uyuşmuyorsa
+  engel **`ARAYUZ_UYUSMAZ`**. Raporda üst düzey `beklenen_arayuz` alanı var.
+- **`aktif_arayuzler`** artık varsayılan yolda olsun olmasın, IPv4 almış (169.254 hariç) ve bağlı TÜM fiziksel
+  bağlantılar (ethernet / wifi / mobil); her biri `no, ad, aciklama, tur, ipv4, ag_gecidi, varsayilan_yol, metrik`
+  (+ Windows `oper, medya`; Linux `operstate`). `fiziksel_arayuz_sayisi` > 1 → **`COKLU_AKTIF_ARAYUZ`**.
+  VPN/sanal/köprü/loopback sayılmaz, `diger_arayuzler`'de ayrıca listelenir. Kurulu ama bağlantısı kesik VPN
+  (ör. Tailscale "Disconnect") engel üretmez. 2.0.x'te yalnız varsayılan yoldaki listeleniyordu; sahada Ethernet +
+  Wi-Fi birlikte açıkken engel hiç çıkmadı.
+- **`engel_mesajlari`**: `{KOD: "eczacıya gösterilecek Türkçe metin"}` — `on_kontrol` mesajında üst düzeyde ve
+  `on_kontrol.engel_mesajlari`'nda. Çift bağlantı mesajı bağlantıları adlarıyla sayar.
+- **`parametreler.durduran_engeller`** (dizi): ön kontrolde bunlardan biri varsa izleme BAŞLAMAZ:
+  `on_kontrol` mesajında `izleme_basladi:false`, `durduran_engeller:[…]`; olay `test_baslamadi`; rapor hemen
+  `rapor_turu:"baslamadi"` ile POST edilir (nonce harcanır — yeni deneme yeni test_basla ister). Liste boşsa
+  (varsayılan) eski davranış: izleme hep başlar, `izleme_basladi:true`.
+- **Test başlatmadan ön kontrol** ("Yeniden kontrol" düğmesi için):
+  ```json
+  → {"modul":"baglanti_testi","protokol":1,"tip":"on_kontrol_iste","olcum_hedefi":"203.0.113.10",
+     "beklenen_arayuz":"wifi","parametreler":{"durduran_engeller":["COKLU_AKTIF_ARAYUZ","ARAYUZ_UYUSMAZ"]}}
+  ← {"modul":"baglanti_testi","protokol":1,"tip":"on_kontrol_sonucu","engeller":[…],"engel_mesajlari":{…},
+     "on_kontrol":{…},"durduran_engeller":[…]}
+  ```
+  test_id/nonce gerekmez, rapor gönderilmez; test ya da başka ön kontrol sürerken `TEST_ZATEN_CALISIYOR`.
+- `yol_degisti.veri`: `onceki`/`yeni` = `{arayuz_no, tur, ag_gecidi}` (Linux'ta ayrıca `arayuz` adı) +
+  `ag_gecidi_degisti` (bool). `arayuz_degisti.veri`'ye `ag_gecidi` ve `fiziksel` eklendi.
 
 ### 4.4 İkinci yönlendirici ipucu (bilgi amaçlı)
 
@@ -306,7 +336,7 @@ geçen süre). Kart hiç düşmediyse `null`. Ağ geçidi kart geri gelmeden dö
 | `MODUL_KAPALI` | latest.json'da modül uzaktan kapatılmış |
 | `PLATFORM_DESTEKLENMIYOR` | Windows dışı gerçek mod |
 | `GECERSIZ_MESAJ` | JSON bozuk ya da bilinmeyen `tip` |
-| `GECERSIZ_PARAMETRE` | `test_id`/`nonce` biçimi geçersiz, `rapor_hedefi` bilinmiyor, `olcum_hedefi` IPv4 değil |
+| `GECERSIZ_PARAMETRE` | `test_id`/`nonce` biçimi geçersiz, `rapor_hedefi` bilinmiyor, `olcum_hedefi` IPv4 değil, `beklenen_arayuz` geçersiz |
 | `TEST_ZATEN_CALISIYOR` | aynı anda ikinci test |
 | `TEST_YOK` | `test_id` aktif testle eşleşmiyor |
 | `NONCE_TEKRAR` | bu exe bu nonce'u daha önce kullandı (son 100 nonce yerelde tutulur; asıl denetim sunucuda) |

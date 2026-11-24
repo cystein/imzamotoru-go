@@ -34,19 +34,22 @@ var btDesteklenenProtokoller = []int{1}
 // ---------------------------------------------------------------------------
 
 type btParametreler struct {
-	YoklamaAraligiMs         int64 `json:"yoklama_araligi_ms"`
-	YoklamaZamanAsimiMs      int64 `json:"yoklama_zaman_asimi_ms"`
-	DurumAraligiMs           int64 `json:"durum_araligi_ms"`
-	OnKontrolYoklamaSayisi   int   `json:"on_kontrol_yoklama_sayisi"`
-	TCPPortlari              []int `json:"tcp_portlari"`
-	TCPAraligiMs             int64 `json:"tcp_araligi_ms"`
-	TCPZamanAsimiMs          int64 `json:"tcp_zaman_asimi_ms"`
-	UPnP                     bool  `json:"upnp"`
-	UPnPAraligiMs            int64 `json:"upnp_araligi_ms"`
-	TestAzamiSuresiMs        int64 `json:"test_azami_suresi_ms"`
-	SonIzlemeSuresiMs        int64 `json:"son_izleme_suresi_ms"`
-	RaporYenidenDenemeSuresi int64 `json:"rapor_yeniden_deneme_suresi_ms"`
-	BoslukEsigiMs            int64 `json:"bosluk_esigi_ms"`
+	YoklamaAraligiMs       int64 `json:"yoklama_araligi_ms"`
+	YoklamaZamanAsimiMs    int64 `json:"yoklama_zaman_asimi_ms"`
+	DurumAraligiMs         int64 `json:"durum_araligi_ms"`
+	OnKontrolYoklamaSayisi int   `json:"on_kontrol_yoklama_sayisi"`
+	TCPPortlari            []int `json:"tcp_portlari"`
+	TCPAraligiMs           int64 `json:"tcp_araligi_ms"`
+	TCPZamanAsimiMs        int64 `json:"tcp_zaman_asimi_ms"`
+	// DurduranEngeller (v2.1.0): ön kontrolde bunlardan biri çıkarsa izleme BAŞLAMAZ, rapor
+	// "baslamadi" türüyle gönderilir. Listeyi sunucu verir; boşsa eski davranış (izleme hep başlar).
+	DurduranEngeller         []string `json:"durduran_engeller"`
+	UPnP                     bool     `json:"upnp"`
+	UPnPAraligiMs            int64    `json:"upnp_araligi_ms"`
+	TestAzamiSuresiMs        int64    `json:"test_azami_suresi_ms"`
+	SonIzlemeSuresiMs        int64    `json:"son_izleme_suresi_ms"`
+	RaporYenidenDenemeSuresi int64    `json:"rapor_yeniden_deneme_suresi_ms"`
+	BoslukEsigiMs            int64    `json:"bosluk_esigi_ms"`
 }
 
 func sinirla(v, en, cok int64) int64 {
@@ -96,6 +99,15 @@ func btParametreleriUygula(ham json.RawMessage) btParametreler {
 		if json.Unmarshal(v, &b) == nil {
 			p.UPnP = b
 		}
+	}
+	if v, ok := m["durduran_engeller"]; ok {
+		var l []string
+		if json.Unmarshal(v, &l) == nil && len(l) <= 50 {
+			p.DurduranEngeller = l
+		}
+	}
+	if p.DurduranEngeller == nil {
+		p.DurduranEngeller = []string{}
 	}
 	if v, ok := m["tcp_portlari"]; ok {
 		var portlar []int
@@ -258,11 +270,11 @@ var (
 type btTest struct {
 	mu sync.Mutex
 
-	ID, Nonce, BeklenenBaglanti, RaporHedefi, OlcumHedefi string
-	Istenen                                               json.RawMessage
-	P                                                     btParametreler
-	saat                                                  *btSaat
-	simulasyon                                            string
+	ID, Nonce, BeklenenBaglanti, BeklenenArayuz, RaporHedefi, OlcumHedefi string
+	Istenen                                                               json.RawMessage
+	P                                                                     btParametreler
+	saat                                                                  *btSaat
+	simulasyon                                                            string
 
 	asama     string // on_kontrol | izleme | son_izleme | rapor | bitti
 	raporTuru string // nihai | iptal | yarim
@@ -608,6 +620,7 @@ type btRapor struct {
 	Nonce            string         `json:"nonce"`
 	Exe              map[string]any `json:"exe"`
 	BeklenenBaglanti string         `json:"beklenen_baglanti"`
+	BeklenenArayuz   string         `json:"beklenen_arayuz"`
 	Parametreler     map[string]any `json:"parametreler"`
 	Zaman            map[string]any `json:"zaman"`
 	OnKontrol        map[string]any `json:"on_kontrol"`
@@ -669,8 +682,8 @@ func (t *btTest) raporOlustur() btRapor {
 	}
 	return btRapor{
 		Protokol: btProtokol, RaporTuru: t.raporTuru, TestID: t.ID, Nonce: t.Nonce, Exe: exe,
-		BeklenenBaglanti: t.BeklenenBaglanti,
-		Parametreler:     map[string]any{"istenen": istenen, "uygulanan": t.P},
+		BeklenenBaglanti: t.BeklenenBaglanti, BeklenenArayuz: t.BeklenenArayuz,
+		Parametreler: map[string]any{"istenen": istenen, "uygulanan": t.P},
 		Zaman: map[string]any{"baslangic_duvar": t.saat.duvar(0), "bitis_mono_ms": ms,
 			"izleme_bitis_mono_ms": t.izlemeBitisMs},
 		OnKontrol: t.onKontrol.Bilgi, Engeller: engeller, Olaylar: t.olaylar,
@@ -695,14 +708,15 @@ type btIstemci interface {
 }
 
 type btYonetici struct {
-	mu         sync.Mutex
-	aktif      *btTest
-	aboneler   map[btIstemci]string       // istemci → izlediği test_id
-	gozlemci   func(t *btTest) btGozlemci // nil → platform desteklemiyor
-	saatHizi   float64
-	simulasyon string
-	gonderici  *btGonderici
-	hedefler   map[string]string // rapor_hedefi anahtarı → URL
+	mu               sync.Mutex
+	aktif            *btTest
+	onKontrolSuruyor bool
+	aboneler         map[btIstemci]string       // istemci → izlediği test_id
+	gozlemci         func(t *btTest) btGozlemci // nil → platform desteklemiyor
+	saatHizi         float64
+	simulasyon       string
+	gonderici        *btGonderici
+	hedefler         map[string]string // rapor_hedefi anahtarı → URL
 }
 
 var btYon *btYonetici
@@ -766,6 +780,7 @@ type btIstek struct {
 	Nonce            string          `json:"nonce"`
 	OlcumHedefi      string          `json:"olcum_hedefi"`
 	BeklenenBaglanti string          `json:"beklenen_baglanti"`
+	BeklenenArayuz   string          `json:"beklenen_arayuz"`
 	RaporHedefi      string          `json:"rapor_hedefi"`
 	Parametreler     json.RawMessage `json:"parametreler"`
 }
@@ -792,6 +807,8 @@ func (y *btYonetici) mesajIsle(c btIstemci, ham []byte) {
 		cevap(y.merhaba())
 	case "test_basla":
 		y.testBasla(c, m, cevap)
+	case "on_kontrol_iste":
+		y.onKontrolIste(m, cevap)
 	case "test_bitir", "test_iptal":
 		y.mu.Lock()
 		t := y.aktif
@@ -907,6 +924,10 @@ func (y *btYonetici) testBasla(c btIstemci, m btIstek, cevap func(map[string]any
 		cevap(btHata(m.IstekNo, "GECERSIZ_PARAMETRE", "beklenen_baglanti modem ya da hotspot olmalı"))
 		return
 	}
+	if m.BeklenenArayuz != "" && !beklenenArayuzDegerleri[m.BeklenenArayuz] {
+		cevap(btHata(m.IstekNo, "GECERSIZ_PARAMETRE", "beklenen_arayuz ethernet, wifi ya da hotspot olmalı"))
+		return
+	}
 	if y.gonderici.nonceKullanildi(m.Nonce) {
 		cevap(btHata(m.IstekNo, "NONCE_TEKRAR", "bu nonce daha önce kullanıldı"))
 		return
@@ -919,7 +940,7 @@ func (y *btYonetici) testBasla(c btIstemci, m btIstek, cevap func(map[string]any
 	}
 	ctx, iptal := context.WithCancel(context.Background())
 	t := &btTest{
-		ID: m.TestID, Nonce: m.Nonce, BeklenenBaglanti: m.BeklenenBaglanti, RaporHedefi: m.RaporHedefi,
+		ID: m.TestID, Nonce: m.Nonce, BeklenenBaglanti: m.BeklenenBaglanti, BeklenenArayuz: m.BeklenenArayuz, RaporHedefi: m.RaporHedefi,
 		OlcumHedefi: m.OlcumHedefi, Istenen: m.Parametreler, P: btParametreleriUygula(m.Parametreler),
 		saat: yeniBtSaat(y.saatHizi), simulasyon: y.simulasyon, asama: "on_kontrol", raporTuru: "nihai",
 		tcpRLE: map[int][]btYoklamaDizisi{}, agHicKaybolmadi: true,
@@ -930,6 +951,66 @@ func (y *btYonetici) testBasla(c btIstemci, m btIstek, cevap func(map[string]any
 	y.mu.Unlock()
 	y.gonderici.nonceKaydet(m.Nonce)
 	go y.testiYurut(ctx, t, y.gozlemci(t), cevap)
+}
+
+// onKontrolIste (v2.1.0): test BAŞLATMADAN yalnız ön kontrol — sayfadaki "Yeniden kontrol" düğmesi
+// için. Nonce/test_id gerekmez, rapor gönderilmez; aktif test varken reddedilir.
+func (y *btYonetici) onKontrolIste(m btIstek, cevap func(map[string]any)) {
+	switch y.modulDurumu() {
+	case "kapali_uzaktan":
+		cevap(btHata(m.IstekNo, "MODUL_KAPALI", "bağlantı testi uzaktan kapatıldı"))
+		return
+	case "desteklenmiyor":
+		cevap(btHata(m.IstekNo, "PLATFORM_DESTEKLENMIYOR", "bu platformda bağlantı testi yok"))
+		return
+	}
+	if ip := net.ParseIP(m.OlcumHedefi); ip == nil || ip.To4() == nil {
+		cevap(btHata(m.IstekNo, "GECERSIZ_PARAMETRE", "olcum_hedefi bir IPv4 adresi olmalı"))
+		return
+	}
+	if m.BeklenenArayuz != "" && !beklenenArayuzDegerleri[m.BeklenenArayuz] {
+		cevap(btHata(m.IstekNo, "GECERSIZ_PARAMETRE", "beklenen_arayuz ethernet, wifi ya da hotspot olmalı"))
+		return
+	}
+	y.mu.Lock()
+	mesgul := y.aktif != nil || y.onKontrolSuruyor
+	if !mesgul {
+		y.onKontrolSuruyor = true
+	}
+	y.mu.Unlock()
+	if mesgul {
+		cevap(btHata(m.IstekNo, "TEST_ZATEN_CALISIYOR", "çalışan bir test ya da ön kontrol var"))
+		return
+	}
+	go func() {
+		defer func() {
+			y.mu.Lock()
+			y.onKontrolSuruyor = false
+			y.mu.Unlock()
+			if r := recover(); r != nil {
+				cevap(btHata(m.IstekNo, "IC_HATA", fmt.Sprint(r)))
+			}
+		}()
+		p := btParametreleriUygula(m.Parametreler)
+		gecici := &btTest{saat: yeniBtSaat(y.saatHizi)}
+		ctx, iptal := context.WithTimeout(context.Background(), 60*time.Second)
+		defer iptal()
+		ok, err := y.gozlemci(gecici).OnKontrol(ctx, p, m.OlcumHedefi)
+		if ok.Bilgi == nil {
+			ok.Bilgi = map[string]any{}
+		}
+		if ok.Engeller == nil {
+			ok.Engeller = []string{}
+		}
+		if err != nil {
+			engelEkle(&ok, "IC_HATA")
+			ok.Bilgi["hata"] = err.Error()
+		}
+		onKontrolTamamla(&ok, m.BeklenenArayuz)
+		cevap(map[string]any{"modul": btModul, "protokol": btProtokol, "tip": "on_kontrol_sonucu",
+			"engeller": ok.Engeller, "engel_mesajlari": ok.Bilgi["engel_mesajlari"], "on_kontrol": ok.Bilgi,
+			"durduran_engeller": durduranEngeller(ok, p.DurduranEngeller)})
+	}()
 }
 
 // testiYurut: ön kontrol → izleme → son izleme → rapor.
@@ -963,7 +1044,19 @@ func (y *btYonetici) testiYurut(ctx context.Context, t *btTest, g btGozlemci, ce
 	}
 	ok.Bilgi["olcum_zamani"] = map[string]any{"mono_ms": t.saat.ms(), "duvar": t.saat.duvar(t.saat.ms())}
 	ok.Bilgi["beklenen_baglanti"] = t.BeklenenBaglanti
+	onKontrolTamamla(&ok, t.BeklenenArayuz)
 	t.onKontrol = ok
+	if durduran := durduranEngeller(ok, t.P.DurduranEngeller); len(durduran) > 0 {
+		// v2.1.0: sunucunun "başlatma" dediği bir engel var — izleme başlamaz, rapor hemen gider.
+		t.raporTuru = "baslamadi"
+		t.olayEkle("test_baslamadi", map[string]any{"engeller": durduran})
+		t.mu.Unlock()
+		cevap(map[string]any{"modul": btModul, "protokol": btProtokol, "tip": "on_kontrol", "test_id": t.ID,
+			"engeller": ok.Engeller, "engel_mesajlari": ok.Bilgi["engel_mesajlari"], "on_kontrol": ok.Bilgi,
+			"uygulanan_parametreler": t.P, "izleme_basladi": false, "durduran_engeller": durduran})
+		y.raporuGonder(t)
+		return
+	}
 	t.kartAcik, t.agVar, t.arpVar, t.tcpVar = ok.KartAcik, ok.AgVar, ok.AgVar, ok.AgVar
 	if oui, _ := ok.Bilgi["ag_gecidi"].(map[string]any); oui != nil {
 		t.sonOUI, _ = oui["oui"].(string)
@@ -973,7 +1066,8 @@ func (y *btYonetici) testiYurut(ctx context.Context, t *btTest, g btGozlemci, ce
 	o := t.olayEkle("izleme_basladi", map[string]any{"kart_acik": ok.KartAcik, "ag_gecidi_var": ok.AgVar})
 	t.mu.Unlock()
 	cevap(map[string]any{"modul": btModul, "protokol": btProtokol, "tip": "on_kontrol", "test_id": t.ID,
-		"engeller": ok.Engeller, "on_kontrol": ok.Bilgi, "uygulanan_parametreler": t.P})
+		"engeller": ok.Engeller, "engel_mesajlari": ok.Bilgi["engel_mesajlari"], "on_kontrol": ok.Bilgi,
+		"uygulanan_parametreler": t.P, "izleme_basladi": true})
 	y.yayinla(t.ID, btOlayMesaji(t.ID, o))
 
 	gozlemler := make(chan btGozlem, 64)

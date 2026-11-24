@@ -544,29 +544,31 @@ func (g *linuxGozlemci) OnKontrol(ctx context.Context, p btParametreler, hedefSt
 			}
 		}
 	}
-	var aktifler []any
+	// v2.1.0: IPv4 almış (APIPA hariç) ve bağlı TÜM fiziksel bağlantılar sayılır (Windows ile aynı kural).
+	aktifler, digerler := []any{}, []any{}
 	vpnler := []string{}
-	varsayilanli := 0
 	for _, a := range arayuzler {
-		if !a.up() {
+		ipler := apipasiz(a.IPv4)
+		if !(a.up() || (a.Carrier == 1 && len(ipler) > 0)) {
 			continue
-		}
-		if a.vpnMi() {
-			vpnler = append(vpnler, a.Ad)
 		}
 		met, vy := varsayilan[a.Ad]
-		if !vy {
+		kayit := map[string]any{"no": a.No, "ad": a.Ad, "tur": a.tur(), "aciklama": a.Ad + " (" + a.Surucu + ")", "ipv4": ipler,
+			"varsayilan_yol": vy, "metrik": met, "operstate": a.Durum}
+		if fizikselTur(a.tur()) && len(ipler) > 0 {
+			aktifler = append(aktifler, kayit)
 			continue
 		}
-		if !a.vpnMi() {
-			varsayilanli++
+		if a.vpnMi() && a.up() {
+			vpnler = append(vpnler, a.Ad)
 		}
-		aktifler = append(aktifler, map[string]any{"no": a.No, "tur": a.tur(), "aciklama": a.Ad + " (" + a.Surucu + ")",
-			"varsayilan_yol": true, "metrik": met})
+		digerler = append(digerler, kayit)
 	}
-	if varsayilanli > 1 {
+	if len(aktifler) > 1 {
 		engel("COKLU_AKTIF_ARAYUZ")
 	}
+	o.Bilgi["fiziksel_arayuz_sayisi"] = len(aktifler)
+	o.Bilgi["diger_arayuzler"] = digerler
 	if len(vpnler) > 0 {
 		engel("VPN_ARAYUZU_VAR")
 	}
@@ -774,9 +776,12 @@ func (g *linuxGozlemci) Izle(ctx context.Context, p btParametreler, cikis chan<-
 		}
 		onceki = simdi
 		if y, ok := enIyiYolLinux(g.hedef); ok && (y.Arayuz != oncekiYol.Arayuz || !y.AgGecidi.Equal(oncekiYol.AgGecidi)) {
+			eA, _ := arayuzAdla(simdi, oncekiYol.Arayuz)
+			yA, _ := arayuzAdla(simdi, y.Arayuz)
 			if !yolla(btGozlem{Tur: "yol", Veri: map[string]any{
-				"onceki": map[string]any{"arayuz": oncekiYol.Arayuz, "ag_gecidi": fmt.Sprint(oncekiYol.AgGecidi)},
-				"yeni":   map[string]any{"arayuz": y.Arayuz, "ag_gecidi": y.AgGecidi.String()}}}) {
+				"onceki":            map[string]any{"arayuz": oncekiYol.Arayuz, "arayuz_no": eA.No, "tur": eA.tur(), "ag_gecidi": fmt.Sprint(oncekiYol.AgGecidi)},
+				"yeni":              map[string]any{"arayuz": y.Arayuz, "arayuz_no": yA.No, "tur": yA.tur(), "ag_gecidi": y.AgGecidi.String()},
+				"ag_gecidi_degisti": !y.AgGecidi.Equal(oncekiYol.AgGecidi)}}) {
 				return false
 			}
 			oncekiYol = y

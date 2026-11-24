@@ -16,7 +16,7 @@
 ; bilerek DEĞİŞMEDİ: eski kurulumların üzerine kurulum ve otomatik güncelleme bu adlara bağlı.
 #define MyAppName "KolitakipIMZA"
 #define MyAppDisplayName "Kolitakip Asistan"
-#define MyAppVersion "2.0.3"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "Kolitakip"
 #define MyAppURL "https://eimza.sgkkolitakip.web.tr"
 #define MyAppExeName "KolitakipIMZA.exe"

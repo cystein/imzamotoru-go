@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -364,5 +365,101 @@ func TestSahaOruntusu(t *testing.T) {
 		if o.Kod == "ag_gecidi_mac_degisti" && o.Veri["yeni_oui"] == "7E:70:16" && o.Veri["yeni_yerel_yonetimli"] != true {
 			t.Fatalf("önyükleyici MAC'i yerel yönetimli işaretlenmeli: %+v", o)
 		}
+	}
+}
+
+func TestOnKontrolTamamla(t *testing.T) {
+	// Wi-Fi'ye bağlı, eczacı "ethernet" seçmiş; Ethernet de takılı (çift bağlantı).
+	o := btOnKontrol{Engeller: []string{"COKLU_AKTIF_ARAYUZ"}, Bilgi: map[string]any{
+		"test_arayuzu":     map[string]any{"tur": "wifi"},
+		"hotspot_ipuclari": []string{},
+		"aktif_arayuzler": []any{
+			map[string]any{"tur": "ethernet", "aciklama": "Realtek PCIe GbE"},
+			map[string]any{"tur": "wifi", "aciklama": "Intel Wi-Fi 6 AX201"},
+		}}}
+	onKontrolTamamla(&o, "ethernet")
+	m := o.Bilgi["engel_mesajlari"].(map[string]string)
+	if o.Bilgi["bulunan_arayuz"] != "wifi" || !strings.Contains(strings.Join(o.Engeller, ","), "ARAYUZ_UYUSMAZ") {
+		t.Fatalf("%v %v", o.Bilgi["bulunan_arayuz"], o.Engeller)
+	}
+	if !strings.Contains(m["COKLU_AKTIF_ARAYUZ"], "Realtek PCIe GbE") || !strings.Contains(m["COKLU_AKTIF_ARAYUZ"], "Intel Wi-Fi 6 AX201") {
+		t.Fatalf("çift bağlantı mesajı adları içermeli: %q", m["COKLU_AKTIF_ARAYUZ"])
+	}
+	if !strings.HasPrefix(m["ARAYUZ_UYUSMAZ"], "Ethernet (kablo) seçtiniz ama bilgisayarınız Wi-Fi ile bağlı") {
+		t.Fatalf("%q", m["ARAYUZ_UYUSMAZ"])
+	}
+	// Hotspot: bilinen ağ geçidi ipucu varsa bulunan "hotspot"; seçim hotspot ise uyuşmazlık yok.
+	h := btOnKontrol{Engeller: []string{"HOTSPOT_IPUCU"}, Bilgi: map[string]any{
+		"test_arayuzu": map[string]any{"tur": "wifi"}, "hotspot_ipuclari": []any{"AG_GECIDI_BILINEN_HOTSPOT_ADRESI"}}}
+	onKontrolTamamla(&h, "hotspot")
+	if h.Bilgi["bulunan_arayuz"] != "hotspot" || strings.Contains(strings.Join(h.Engeller, ","), "ARAYUZ_UYUSMAZ") {
+		t.Fatalf("%v %v", h.Bilgi["bulunan_arayuz"], h.Engeller)
+	}
+	t.Logf("mesajlar: %v", m)
+}
+
+type kayitIstemci struct {
+	mu   sync.Mutex
+	msgs []map[string]any
+}
+
+func (k *kayitIstemci) Yaz(v any) error {
+	b, _ := json.Marshal(v)
+	var m map[string]any
+	json.Unmarshal(b, &m)
+	k.mu.Lock()
+	k.msgs = append(k.msgs, m)
+	k.mu.Unlock()
+	return nil
+}
+
+func (k *kayitIstemci) bekle(t *testing.T, tip string, alan, deger string) map[string]any {
+	son := time.Now().Add(10 * time.Second)
+	for time.Now().Before(son) {
+		k.mu.Lock()
+		for _, m := range k.msgs {
+			if m["tip"] == tip && (alan == "" || fmt.Sprint(m[alan]) == deger) {
+				k.mu.Unlock()
+				return m
+			}
+		}
+		k.mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("%s (%s=%s) gelmedi: %v", tip, alan, deger, k.msgs)
+	return nil
+}
+
+func TestDurduranEngelVeOnKontrolIste(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	sunucu := &sahteSunucu{}
+	srv := httptest.NewServer(sunucu)
+	defer srv.Close()
+	s := simSenaryolar["d6_coklu_kart"]
+	btYon = &btYonetici{aboneler: map[btIstemci]string{}, saatHizi: 50, simulasyon: s.ad, gonderici: yeniBtGonderici(true, 50),
+		hedefler: map[string]string{"canli": srv.URL}}
+	btYon.gozlemci = func(tt *btTest) btGozlemci {
+		return &simGozlemci{s: s, saat: func() *btSaat { return tt.saat }, bitirFn: func() {}}
+	}
+	c := &kayitIstemci{}
+	// 1) test başlatmadan ön kontrol
+	btYon.mesajIsle(c, []byte(`{"modul":"baglanti_testi","protokol":1,"tip":"on_kontrol_iste","olcum_hedefi":"203.0.113.10","beklenen_arayuz":"wifi","parametreler":{"durduran_engeller":["COKLU_AKTIF_ARAYUZ"]}}`))
+	r := c.bekle(t, "on_kontrol_sonucu", "", "")
+	if !strings.Contains(fmt.Sprint(r["engeller"]), "COKLU_AKTIF_ARAYUZ") || !strings.Contains(fmt.Sprint(r["engeller"]), "ARAYUZ_UYUSMAZ") ||
+		!strings.Contains(fmt.Sprint(r["durduran_engeller"]), "COKLU_AKTIF_ARAYUZ") {
+		t.Fatalf("%v", r)
+	}
+	// 2) durduran engelle test: izleme başlamamalı, rapor "baslamadi"
+	btYon.mesajIsle(c, []byte(`{"modul":"baglanti_testi","protokol":1,"tip":"test_basla","test_id":"t_durdur_01","nonce":"nonce-durdur-0123456789","olcum_hedefi":"203.0.113.10","beklenen_baglanti":"modem","beklenen_arayuz":"ethernet","rapor_hedefi":"canli","parametreler":{"durduran_engeller":["COKLU_AKTIF_ARAYUZ"]}}`))
+	ok := c.bekle(t, "on_kontrol", "izleme_basladi", "false")
+	if !strings.Contains(fmt.Sprint(ok["engel_mesajlari"]), "aynı anda") {
+		t.Fatalf("mesaj yok: %v", ok["engel_mesajlari"])
+	}
+	c.bekle(t, "rapor_durumu", "durum", "gonderildi")
+	sunucu.mu.Lock()
+	defer sunucu.mu.Unlock()
+	if len(sunucu.raporlar) != 1 || sunucu.raporlar[0]["rapor_turu"] != "baslamadi" || sunucu.raporlar[0]["beklenen_arayuz"] != "ethernet" {
+		t.Fatalf("%v", sunucu.raporlar)
 	}
 }

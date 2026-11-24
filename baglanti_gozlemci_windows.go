@@ -485,30 +485,34 @@ func (g *winGozlemci) OnKontrol(ctx context.Context, p btParametreler, hedefStr 
 		o.KartAcik = ta.up()
 	}
 
-	// Aktif arayüzler, VPN, çoklu kart
-	var aktifler []any
+	// Aktif arayüzler (v2.1.0): varsayılan yolda olsun olmasın, IPv4 almış (APIPA hariç) ve bağlı
+	// TÜM fiziksel bağlantılar sayılır. Sahada (2026-11) Ethernet + Wi-Fi birlikte açıkken yalnız
+	// varsayılan yoldaki listeleniyordu; modem kapanınca yol diğerine geçip test bozuluyordu.
+	// VPN/sanal/köprü bağlantıları sayıma girmez, diger_arayuzler'de ayrıca raporlanır.
+	aktifler, digerler := []any{}, []any{}
 	var vpnler []string
-	varsayilanli := 0
 	for _, a := range arayuzler {
-		if !a.up() {
+		ipler := apipasiz(a.IPv4)
+		if !(a.up() || (a.Medya == 1 && len(ipler) > 0)) {
 			continue
 		}
 		met, vyVar := vy[a.No]
-		if a.vpnMi() {
-			vpnler = append(vpnler, a.Aciklama)
-		}
-		if a.AgGecidi == "" && !vyVar {
+		kayit := map[string]any{"no": a.No, "ad": a.Ad, "tur": a.tur(), "aciklama": a.Aciklama, "ipv4": ipler,
+			"ag_gecidi": a.AgGecidi, "varsayilan_yol": vyVar, "metrik": met, "oper": a.Oper, "medya": a.Medya}
+		if fizikselTur(a.tur()) && len(ipler) > 0 {
+			aktifler = append(aktifler, kayit)
 			continue
 		}
-		if vyVar && !a.vpnMi() {
-			varsayilanli++
+		if a.vpnMi() && a.up() {
+			vpnler = append(vpnler, a.Aciklama)
 		}
-		aktifler = append(aktifler, map[string]any{"no": a.No, "tur": a.tur(), "aciklama": a.Aciklama, "ag_gecidi": a.AgGecidi,
-			"varsayilan_yol": vyVar, "metrik": met})
+		digerler = append(digerler, kayit)
 	}
-	if varsayilanli > 1 {
+	if len(aktifler) > 1 {
 		engel("COKLU_AKTIF_ARAYUZ")
 	}
+	o.Bilgi["fiziksel_arayuz_sayisi"] = len(aktifler)
+	o.Bilgi["diger_arayuzler"] = digerler
 	if vpnler == nil {
 		vpnler = []string{}
 	}
@@ -724,7 +728,7 @@ func (g *winGozlemci) Izle(ctx context.Context, p btParametreler, cikis chan<- b
 				if !yolla(btGozlem{Tur: "vpn", Veri: map[string]any{"var": y.up(), "aciklama": y.Aciklama}}) {
 					return false
 				}
-			} else if !yolla(btGozlem{Tur: "arayuz", Veri: map[string]any{"arayuz_no": no, "tur": y.tur(), "durum": map[bool]string{true: "up", false: "down"}[y.up()]}}) {
+			} else if !yolla(btGozlem{Tur: "arayuz", Veri: map[string]any{"arayuz_no": no, "tur": y.tur(), "ag_gecidi": y.AgGecidi, "fiziksel": fizikselTur(y.tur()), "durum": map[bool]string{true: "up", false: "down"}[y.up()]}}) {
 				return false
 			}
 		}
@@ -738,9 +742,11 @@ func (g *winGozlemci) Izle(ctx context.Context, p btParametreler, cikis chan<- b
 		onceki = simdi
 		// Yol
 		if y, err := enIyiYol(g.hedef); err == nil && (y.Arayuz != oncekiYol.Arayuz || y.AgGecidi != oncekiYol.AgGecidi) {
+			// v2.1.0: bağlantı çifti türleriyle — sunucu ağ geçidi/tür değişimini değerlendirir.
 			if !yolla(btGozlem{Tur: "yol", Veri: map[string]any{
-				"onceki": map[string]any{"arayuz_no": oncekiYol.Arayuz, "ag_gecidi": oncekiYol.AgGecidi},
-				"yeni":   map[string]any{"arayuz_no": y.Arayuz, "ag_gecidi": y.AgGecidi}}}) {
+				"onceki":            map[string]any{"arayuz_no": oncekiYol.Arayuz, "tur": simdi[oncekiYol.Arayuz].tur(), "ag_gecidi": oncekiYol.AgGecidi},
+				"yeni":              map[string]any{"arayuz_no": y.Arayuz, "tur": simdi[y.Arayuz].tur(), "ag_gecidi": y.AgGecidi},
+				"ag_gecidi_degisti": y.AgGecidi != oncekiYol.AgGecidi}}) {
 				return false
 			}
 			oncekiYol = y
